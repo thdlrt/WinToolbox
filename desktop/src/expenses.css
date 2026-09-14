@@ -1,0 +1,60 @@
+.expenses-page{max-width:1180px}
+.expenses-toolbar,.expenses-toolbar>div{display:flex;align-items:center;gap:9px}
+.expenses-toolbar{justify-content:space-between;margin-bottom:18px}
+.expenses-period{align-items:flex-end!important}
+.expenses-period>.field{margin:0;width:158px}
+.expenses-period>span{padding-bottom:11px;color:var(--muted);font-size:11px}
+.expenses-period>.button{margin-bottom:1px}
+.expenses-totals{display:grid;grid-template-columns:1fr;gap:12px;margin-bottom:20px}
+.expenses-currency{margin:0;padding:17px 19px}
+.expenses-currency-heading{display:flex;justify-content:space-between;gap:15px}
+.expenses-currency-heading>small{font-size:11px;color:var(--muted);font-variant-numeric:tabular-nums}
+.expenses-currency-label{font-size:11px;font-weight:600;color:var(--muted)}
+.expenses-currency dl{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:14px;margin:13px 0 0}
+.expenses-settlement.due>dd{color:var(--accent)}
+.expenses-settlement.extra>dd{color:var(--warning)}
+.expenses-settlement.settled>dd{color:var(--green)}
+.expenses-summary-hint{margin-bottom:12px;line-height:1.65}
+.expenses-currency dt{font-size:11px;color:var(--muted)}
+.expenses-currency dd{font-size:19px;line-height:1.5;font-weight:600;margin:5px 0 0;overflow-wrap:anywhere;font-variant-numeric:tabular-nums}
+.expenses-currency dl>div:not(:first-child)>dd{font-size:16px;font-weight:500}
+.expenses-list{padding:7px 18px}
+.expenses-list-heading,.expenses-row{display:grid;grid-template-columns:82px minmax(110px,1fr) minmax(122px,.6fr) 80px 45px;align-items:center;gap:15px;width:100%;text-align:left}
+.expenses-list-heading{color:var(--muted);font-size:11px;padding:13px 8px;border-bottom:1px solid var(--border)}
+.expenses-row{padding:15px 8px;border-bottom:1px solid var(--border);font-size:12px;border-radius:3px}
+.expenses-row:last-child{border-bottom:0}
+.expenses-row:hover{background:var(--surface-subtle)}
+.expenses-row time,.expenses-row-title>small,.expenses-attachment-count{color:var(--muted)}
+.expenses-row-title{min-width:0}
+.expenses-row-title>strong{display:block;font-weight:550;overflow-wrap:anywhere;line-height:1.5}
+.expenses-row-title>small{display:block;font-size:10px;margin-top:4px}
+.expenses-amount{font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
+.expenses-amount>small{font-size:10px;color:var(--muted)}
+.expenses-status{font-size:11px;color:var(--muted)}
+.expenses-status.waiting{color:var(--accent)}
+.expenses-status.reimbursed{color:var(--green)}
+.expenses-amount.income{color:var(--green)}
+.expenses-filters{display:flex;align-items:center;gap:8px;margin-bottom:12px;flex-wrap:wrap}
+.expenses-filters>.search-input{flex:1;min-width:180px;max-width:420px}
+.expenses-filters>select{width:132px;min-height:35px;padding:6px 25px 6px 10px;font-size:12px}
+.expenses-filters>.button{min-height:35px;padding:6px 9px;font-size:12px}
+.expenses-more-filters{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;margin-bottom:14px;max-width:600px}
+.expenses-more-filters>.field{margin:0}
+.expenses-attachment-count{display:flex;align-items:center;gap:5px;font-size:11px}
+.expenses-money-fields{display:grid;grid-template-columns:minmax(0,1fr)100px minmax(100px,1fr);gap:16px}
+.expenses-editor .field{min-width:0}
+.expenses-attachments{border-top:1px solid var(--border);padding-top:14px;margin-top:3px}
+.expenses-attachments-heading{display:flex;align-items:center;gap:8px;margin-bottom:9px}
+.expenses-attachments-heading>h3{font-size:13px;flex:1}
+.expenses-attachments-heading>select{width:106px;min-height:33px;padding:5px 22px 5px 8px;font-size:12px}
+.expenses-attachments-heading>.button{min-height:33px;padding:6px 11px;font-size:12px}
+.expenses-attachment{display:flex;align-items:center;gap:10px;margin-top:6px;padding:6px 0;border-bottom:1px solid var(--border)}
+.expenses-attachment>button:first-child{display:flex;align-items:center;gap:7px;flex:1;min-width:0;text-align:left;color:var(--accent);font-size:12px}
+.expenses-attachment>button:first-child>span{overflow-wrap:anywhere}
+.expenses-attachment>button:first-child>svg{flex:none}
+.expenses-attachment>small{font-size:10px;color:var(--muted)}
+.expenses-progress{margin-top:12px;font-size:11px;color:var(--muted)}
+.expenses-progress>.progress{margin-top:7px}
+.expenses-editor-footer>small{font-size:11px;color:var(--muted)}
+@media(max-width:800px){.expenses-toolbar{flex-wrap:wrap;align-items:flex-end}.expenses-period>.field{width:140px}.expenses-currency dl{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:700px){.expenses-list{padding:7px 10px}.expenses-row,.expenses-list-heading{grid-template-columns:70px minmax(70px,1fr) minmax(100px,.65fr)65px;gap:8px}.expenses-list-heading>span:last-child{display:none}.expenses-attachment-count{grid-column:2}.expenses-money-fields{grid-template-columns:minmax(0,1fr)90px}.expenses-money-fields>.field:last-child{grid-column:1/-1}.expenses-attachments-heading{flex-wrap:wrap}.expenses-attachments-heading>h3{min-width:50px}.expenses-editor-footer{gap:6px}.expenses-editor-footer>.button{padding:7px 10px}}

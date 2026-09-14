@@ -1,0 +1,23 @@
+.webdav-sync{min-width:0}
+.webdav-connection-actions{display:flex;align-items:center;gap:9px;margin-top:14px}
+.webdav-connection-actions>.small-note{flex:1}
+.webdav-options{gap:16px 26px;margin:0 0 18px}
+.webdav-upload{display:flex;align-items:center;gap:18px}
+.webdav-upload>.field{flex:1;max-width:470px;margin:0}
+.webdav-upload>.button{margin-left:auto}
+.webdav-progress{margin-top:17px;font-size:12px;color:var(--muted)}
+.webdav-progress>.progress{margin-top:8px}
+.webdav-message{white-space:pre-wrap;overflow-wrap:anywhere}
+.webdav-snapshots-heading{display:flex;align-items:center;justify-content:space-between;gap:14px;margin-top:23px;margin-bottom:10px}
+.webdav-snapshots-heading>h3{font-size:13px}
+.webdav-snapshot-list{max-height:250px;overflow:auto;border:1px solid var(--border);border-radius:7px}
+.webdav-snapshot{display:flex;align-items:center;gap:11px;padding:12px 14px;cursor:pointer;border-bottom:1px solid var(--border)}
+.webdav-snapshot:last-child{border:0}
+.webdav-snapshot:hover{background:var(--surface-subtle)}
+.webdav-snapshot>input{width:14px;min-height:14px;height:14px;margin:0;flex:0 0 14px;accent-color:var(--accent)}
+.webdav-snapshot>span{min-width:0;flex:1}
+.webdav-snapshot strong{display:block;font-size:12px;font-weight:500;overflow-wrap:anywhere}
+.webdav-snapshot small{display:block;font-size:11px;color:var(--muted);margin-top:4px}
+.webdav-restore-action{display:flex;justify-content:flex-end;margin-top:13px}
+.webdav-sync>.empty-state{min-height:75px;padding:17px}
+@media(max-width:650px){.webdav-connection-actions{flex-wrap:wrap}.webdav-connection-actions>.small-note{flex-basis:100%}.webdav-connection-actions>.button:nth-child(2){margin-left:auto}.webdav-upload{flex-wrap:wrap;gap:12px}.webdav-upload>.field{flex-basis:100%;max-width:none}.webdav-snapshot{padding:10px;gap:8px}.webdav-options{align-items:flex-start;gap:13px}}

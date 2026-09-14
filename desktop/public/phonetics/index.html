@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>音标教学</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="style.css"><link rel="stylesheet" href="embedded.css">
+<script defer src="course.js"></script><script defer src="app.js"></script>
+</head>
+<body inert><p id="course-loading" role="status">正在加载学习进度…</p>
+<div class="app">
+<div class="course-meta"><span>一般美音示范 <span class="sep">/</span> 有一点基础即可</span><span id="progress-label">已完成 0 / 5</span></div><div class="progress-track"><span id="progress-bar"></span></div>
+  <nav aria-label="课程章节" id="nav"></nav>
+  <main id="lesson" tabindex="-1"></main>
+  <div class="lesson-footer"><span id="lesson-count"></span><button class="primary" id="complete">完成本节，继续 →</button></div>
+  <details class="resources"><summary>参考资源与使用说明 <span>音频 · 视频 · 开源工具 ↗</span></summary><div class="resource-grid">
+    <a href="https://dictionary.cambridge.org/pronunciation/" target="_blank" rel="noopener"><b>Cambridge Dictionary ↗</b><span>真人单词录音与音标。核对你报告里的专有词。</span></a>
+    <a href="https://pronuncian.com/sounds" target="_blank" rel="noopener"><b>Pronuncian ↗</b><span>美音发音位置与示范。按具体音查，不必整套刷完。</span></a>
+    <a href="https://soundsamerican.net/" target="_blank" rel="noopener"><b>Sounds American ↗</b><span>口型与舌位视频讲解；外部视频播放需要联网。</span></a>
+    <a href="https://github.com/Thiagohgl/ai-pronunciation-trainer" target="_blank" rel="noopener"><b>AI Pronunciation Trainer ↗</b><span>开源发音评估，有在线演示。作为补充反馈。</span></a>
+    <a href="https://github.com/westonruter/ipa-chart" target="_blank" rel="noopener"><b>IPA Chart ↗</b><span>开源 IPA 查表与字符选择，适合随手参考。</span></a>
+    <a href="https://www.internationalphoneticassociation.org/news/201807/new-interactive-ipa-chart" target="_blank" rel="noopener"><b>国际语音协会交互表 ↗</b><span>查单个音的音频。覆盖多语言，超出本微课的英语范围。</span></a>
+  </div><p class="fine">本课预设音频为 en-US-AriaNeural 合成示范，已保存在 audio 文件夹；不是母语者真人录音。音标采用常见词典宽式写法，/e/ 在部分美音资料中写作 /ɛ/。单词按钮播放整个单词，不会把 IPA 符号交给语音引擎猜读。重音按钮按拼写分块辅助记忆，不代表严格语音音节边界。</p><p class="fine">进度与自定义稿保存在工具箱数据目录，可随备份迁移。录音只在本机回放，离开课程后消失，请先下载；本课不对发音打分。自定义稿的系统朗读是否可用、是否联网取决于设备语音。</p><button id="export-progress" class="quiet">导出练习记录 .md</button></details>
+</div>
+<div class="player" aria-label="示范音频播放器"><span class="play-dot"></span><span id="audio-status" role="status" aria-live="polite">准备好了。点击「听示范」开始。</span><label>速度 <select id="speed"><option value="0.8">0.8×</option><option value="1" selected>1×</option></select></label><button id="stop" aria-label="停止示范音频">停止</button></div>
+<audio id="sample" preload="none"></audio>
+<noscript>请用支持 JavaScript 的浏览器打开本教程。</noscript>
+</body></html>

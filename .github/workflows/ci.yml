@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install Python dependencies
+        run: uv sync --project core --group dev
+      - name: Run Python tests
+        run: core\.venv\Scripts\python.exe -m pytest tests -q
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+      - name: Install frontend dependencies
+        run: npm.cmd ci
+        working-directory: desktop
+      - name: Build frontend
+        run: npm.cmd run build
+        working-directory: desktop
+      - name: Check Rust desktop shell
+        run: cargo check --locked
+        working-directory: desktop/src-tauri

@@ -1,0 +1,11 @@
+{
+  "id": "file-hash",
+  "name": "文件哈希",
+  "version": "1.0.0",
+  "api_version": 1,
+  "description": "计算本地文件的 SHA-256；示范无需重新编译即可安装的工具包。",
+  "runtime": "python",
+  "entrypoint": "main.py",
+  "permissions": ["filesystem"],
+  "ui": {"fields": [{"name": "path", "label": "文件", "type": "file", "required": true}]}
+}

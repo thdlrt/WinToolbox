@@ -1,0 +1,37 @@
+import { strict as assert } from 'node:assert';
+import { emptyWebDavDraft, webdavConnectionParams, webdavBackupPasswordValid, webdavDirty } from './webdavState.ts';
+import { migratedUiPreferences, validFavorites, validTheme } from './uiPreferences.ts';
+
+const saved = { url: 'https://dav.example.com', remote_path: '重要文件/sync/WinToolbox', username: 'demo', has_password: true };
+const draft = { ...emptyWebDavDraft(), ...saved, password: '' };
+assert.equal(webdavDirty(draft, saved), false);
+assert.equal('password' in webdavConnectionParams(draft), false, 'blank WebDAV password must be omitted to preserve the stored credential');
+assert.equal(webdavConnectionParams({ ...draft, password: ' new test password ' }).password, ' new test password ', 'explicit passwords preserve meaningful spaces');
+assert.equal(webdavDirty({ ...draft, password: 'new' }, saved), true);
+assert.equal(webdavDirty({ ...draft, remote_path: 'Other folder' }, saved), true);
+assert.equal(webdavDirty({ ...draft, username: 'another' }, saved), true);
+assert.equal(webdavDirty({ ...draft, url: 'https://other.example.com' }, saved), true);
+assert.equal(webdavConnectionParams({ ...draft, url: ' https://dav.example.com ' }).url, saved.url);
+assert.equal(webdavConnectionParams(draft).remote_path, saved.remote_path);
+assert.equal(webdavBackupPasswordValid(false, ''), true);
+assert.equal(webdavBackupPasswordValid(true, ''), false);
+assert.equal(webdavBackupPasswordValid(true, '1234567'), false);
+assert.equal(webdavBackupPasswordValid(false, '1234567'), false);
+assert.equal(webdavBackupPasswordValid(true, '12345678'), true);
+assert.equal(webdavBackupPasswordValid(false, '12345678'), true);
+
+const migrated = migratedUiPreferences({ theme: 'system' }, 'dark', '["practice","captions"]');
+assert.equal(migrated.theme, 'dark', 'first migration preserves the existing local theme');
+assert.deepEqual(migrated.favorites, ['practice', 'captions']);
+assert.equal(migrated.ui_state_synced, true);
+const fallback = migratedUiPreferences({ theme: 'light', favorites: ['media'] }, null, null);
+assert.equal(fallback.theme, 'light', 'without local data preserve backend values');
+assert.deepEqual(fallback.favorites, ['media']);
+assert.deepEqual(migratedUiPreferences({}, null, 'broken-json').favorites, ['media', 'live']);
+assert.deepEqual(migratedUiPreferences({}, null, '[]').favorites, [], 'an intentionally empty favorite list stays empty');
+assert.equal(migratedUiPreferences({ theme: 'dark' }, 'invalid', '[1]').theme, 'dark');
+assert.equal(validTheme('system'), true);
+assert.equal(validTheme('unexpected'), false);
+assert.equal(validFavorites(['media']), true);
+assert.equal(validFavorites([1]), false);
+console.log('WebDAV/preferences: 27 assertions passed; no network or credential access.');

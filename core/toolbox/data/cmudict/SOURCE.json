@@ -1,0 +1,29 @@
+{
+  "project": "CMUdict",
+  "repository": "https://github.com/cmusphinx/cmudict",
+  "revision": "74790861f652b15e4ac49015a90074ad62a27690",
+  "retrieved_at": "2026-09-09T15:55:45.453075+00:00",
+  "license": "BSD-2-Clause",
+  "files": {
+    "cmudict.dict": {
+      "sha256": "81917843c7f44ce2b094ac63873c2c7a4cf802040792c455ba3ca406891c3d22",
+      "bytes": 3618488,
+      "source": "https://raw.githubusercontent.com/cmusphinx/cmudict/74790861f652b15e4ac49015a90074ad62a27690/cmudict.dict"
+    },
+    "LICENSE": {
+      "sha256": "bd4ce8e44170a5f9f481310ca85c51de3c4f851a65e679b40e603b143bd3542a",
+      "bytes": 1754,
+      "source": "https://raw.githubusercontent.com/cmusphinx/cmudict/74790861f652b15e4ac49015a90074ad62a27690/LICENSE"
+    },
+    "README": {
+      "sha256": "00c34e7564f1f6a68de02e12c123d801471da92bc3091f7d89b605f238bf8554",
+      "bytes": 1412,
+      "source": "https://raw.githubusercontent.com/cmusphinx/cmudict/74790861f652b15e4ac49015a90074ad62a27690/README"
+    },
+    "cmudict.phones": {
+      "sha256": "ffb588a5e55684723582c7256e1d2f9fadb130011392d9e59237c76e34c2cfd6",
+      "bytes": 382,
+      "source": "https://raw.githubusercontent.com/cmusphinx/cmudict/74790861f652b15e4ac49015a90074ad62a27690/cmudict.phones"
+    }
+  }
+}

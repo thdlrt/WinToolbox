@@ -1,0 +1,4 @@
+.phonetics-page{display:flex;flex-direction:column;gap:12px;min-height:calc(100vh - 116px)}
+.phonetics-toolbar{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap}
+.phonetics-toolbar>.small-note{font-size:11px}
+.phonetics-frame{display:block;width:100%;height:calc(100vh - 172px);min-height:420px;border:0;background:var(--bg);border-radius:7px;flex:1}

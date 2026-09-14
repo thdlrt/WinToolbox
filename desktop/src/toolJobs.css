@@ -1,0 +1,13 @@
+.tool-jobs { margin: 20px 0; min-width: 0; }
+.tool-jobs > h3 { font-size: 14px; margin: 0 0 10px; }
+.tool-job { padding: 12px 0; border-top: 1px solid var(--border); }
+.tool-job-heading { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.tool-job-heading > strong { font-size: 13px; overflow-wrap: anywhere; }
+.tool-job > .progress { margin-top: 8px; }
+.tool-job > p { margin: 6px 0; font-size: 12px; overflow-wrap: anywhere; white-space: pre-wrap; }
+.tool-job time { display: inline-block; margin-left: 12px; color: var(--muted); }
+.tool-job-error { color: var(--danger, #b42318); }
+.tool-job-results > summary, .tool-job-history > summary { cursor: pointer; font-size: 12px; color: var(--muted); padding: 6px 0; }
+.tool-job-artifact { display: flex; align-items: center; gap: 8px; padding: 5px 0; }
+.tool-job-artifact > span { flex: 1; min-width: 0; overflow-wrap: anywhere; font-size: 12px; }
+@media (max-width: 650px) { .tool-job-heading { flex-wrap: wrap; } .tool-job-heading > strong { flex-basis: 100%; } }
