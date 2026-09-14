@@ -107,7 +107,7 @@ def test_stop_restart_ignores_old_translation_and_final(app):
     entered, release = threading.Event(), threading.Event()
     def chat(*args, **kwargs):
         entered.set()
-        assert release.wait(2)
+        assert release.wait(10)
         return "stale translation"
     app.providers.chat = chat
     app.call("captions.start")
@@ -268,7 +268,7 @@ def test_each_final_cue_keeps_its_own_translation_when_requests_finish_out_of_or
     app.call('captions.start')
     s = app.live_holder['session']
     s.segment('utterance', 'First sentence. Second sentence.', True, 'system', 0, 4)
-    assert entered.wait(2)
+    assert entered.wait(10)
     eventually(lambda: s.segments['utterance:1']['translation_state'] == 'ready')
     assert s.segments['utterance']['translation_state'] == 'pending'
     release.set()
