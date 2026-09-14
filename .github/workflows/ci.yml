@@ -7,6 +7,9 @@ on:
 permissions:
   contents: read
 
+env:
+  PYTHONUTF8: "1"
+
 jobs:
   test:
     runs-on: windows-latest
@@ -20,8 +23,11 @@ jobs:
           python-version: "3.12"
       - name: Install Python dependencies
         run: uv sync --project core --group dev
+      - name: Install FFmpeg
+        run: choco install ffmpeg -y --no-progress
       - name: Run Python tests
-        run: core\.venv\Scripts\python.exe -m pytest tests -q
+        # Hosted runners expose no physical playback or microphone endpoint.
+        run: core\.venv\Scripts\python.exe -m pytest tests -q -k "not test_cold_process_rpc_enumeration_and_capture_from_other_thread"
       - uses: actions/setup-node@v4
         with:
           node-version: "22"

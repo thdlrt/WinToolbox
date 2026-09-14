@@ -1,0 +1,10 @@
+* text=auto eol=lf
+
+*.ico binary
+*.mp3 binary
+*.pdf binary
+*.png binary
+*.toolpkg binary
+
+# These upstream files are validated by exact byte size and SHA-256.
+core/toolbox/data/cmudict/* binary
