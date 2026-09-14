@@ -25,7 +25,7 @@ WinToolbox 的首次公开版本。它把语音、字幕、口语练习和日常
 
 ## 验证与限制
 
-- 336 项 Python 测试、TypeScript 检查、Vite 生产构建和 Rust release 构建通过。
+- 338 项 Python 测试、TypeScript 检查、Vite 生产构建和 Rust release 构建通过。
 - 便携 ZIP 已检查，不包含开发者的 `data`、密钥、WebDAV 配置、数据库、备份或个人录音；解压后独立 Python RPC、FFmpeg 与 FFprobe 冒烟测试通过。
 - 支持 Windows 11 x64；Windows 10 与所有音频设备组合仍需更多实机验证。
 - 云端模型的费用、可用区域和最终效果取决于用户账号、素材与网络；大型本地模型需自行下载并满足对应硬件要求。

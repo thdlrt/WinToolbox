@@ -6,7 +6,7 @@
 
 完整测试命令：`core/.venv/Scripts/python.exe -m pytest tests -q`。
 
-最终核心测试：**336 passed**。覆盖引擎、语音与字幕、资料索引、口语练习、记账、WebDAV、扩展、备份迁移、Shizuku 和 FN Connect 等功能。
+最终核心测试：**338 passed**。覆盖引擎、语音与字幕、资料索引、口语练习、记账、WebDAV、扩展、备份迁移、Shizuku 和 FN Connect 等功能。
 
 - 任务队列、状态保存、取消、重试、输入/参数指纹检查点。
 - 字幕时间校验、片段对应翻译、全稿分段总结、实际 FFmpeg 字幕压制与配音音轨混合。
