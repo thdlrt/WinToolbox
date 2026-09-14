@@ -130,7 +130,7 @@ def register(app):
         try:
             log_path = output_dir / "plugin.stderr.log"
             with log_path.open("w", encoding="utf-8") as stderr:
-                process = subprocess.Popen([sys.executable, "-I", "-u", str(directory / manifest["entrypoint"])],
+                process = subprocess.Popen([sys.executable, "-I", "-X", "utf8", "-u", str(directory / manifest["entrypoint"])],
                     cwd=directory, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=stderr,
                     text=True, encoding="utf-8", errors="replace", creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
                 process.stdin.write(json.dumps({"params": job.params.get("params", {}), "context": {"output_dir": str(output_dir), "api_version": 1}}, ensure_ascii=False) + "\n")
