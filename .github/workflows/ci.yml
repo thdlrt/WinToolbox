@@ -39,6 +39,9 @@ jobs:
       - name: Build frontend
         run: npm.cmd run build
         working-directory: desktop
+      - name: Prepare Tauri resource directories
+        run: New-Item -ItemType Directory -Force resources\python,resources\core,resources\tools | Out-Null
+        working-directory: desktop/src-tauri
       - name: Check Rust desktop shell
         run: cargo check --locked
         working-directory: desktop/src-tauri
