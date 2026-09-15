@@ -3,7 +3,7 @@
   "private": true,
   "license": "MIT",
   "repository": "https://github.com/thdlrt/WinToolbox",
-  "version": "0.1.20",
+  "version": "0.1.21",
   "type": "module",
   "scripts": {
     "dev": "vite --host 127.0.0.1",

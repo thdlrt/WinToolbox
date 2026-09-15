@@ -172,7 +172,9 @@ class NasSession:
         except ValueError: raise ValueError('NAS 局域网桥未升级或没有管理员权限') from None
         if info.get('protocol') != 'lanbridge-tcp-v1': raise ValueError('NAS 隧道版本不匹配')
         self.half_close=info.get('tcpHalfClose',False) is True
-        self.policy=info.get('policy',{'enabled':True,'allowPublic':True,'networks':['192.168.100.0/24']})
+        self.policy=info.get('policy')
+        if not isinstance(self.policy,dict) or not isinstance(self.policy.get('networks'),list) or not self.policy['networks']:
+            raise ValueError('NAS 局域网桥没有返回有效的访问范围，请升级插件后重试')
         if not self.policy.get('enabled'): raise ValueError('NAS 已关闭客户端隧道，请在飞牛插件中启用')
         self.bootstrap()
         self.call({'req':'user.authToken','main':True,'si':self.si})
@@ -223,6 +225,7 @@ class FnClient:
         self.session_factory=session_factory
         self.session=None
         self.server=None
+        self.forward_servers={}
         self.stop_event=threading.Event()
         self.sockets=set()
         self.lock=threading.RLock()
@@ -242,9 +245,12 @@ class FnClient:
         self.session=session
         try:
             session.login(username,password)
-            policy=getattr(session,'policy',{'allowPublic':True,'networks':['192.168.100.0/24']})
+            policy=getattr(session,'policy',None)
+            policy_valid=isinstance(policy,dict) and isinstance(policy.get('networks'),list) and bool(policy['networks'])
+            if not policy_valid: policy={'allowPublic':True,'networks':['192.168.100.0/24']}
             if scope=='all' and not policy.get('allowPublic'): raise ValueError('NAS 未允许全局出口，请先在飞牛插件中开启')
             self.state['networks']=policy.get('networks',['192.168.100.0/24'])
+            self.state['forward_policy_valid']=policy_valid
             self.state['transport_ips']=getattr(session,'addresses',[])
             if self.stop_event.is_set(): raise ValueError('连接已取消')
             owner=self
@@ -274,13 +280,13 @@ class FnClient:
                 self.on_failure()
                 return
 
-    def open(self, host, port):
+    def open(self, host, port, scope=None):
         if self.state['phase']!='connected': raise ValueError('隧道尚未连接')
         s=self.session
         ws=s.connect_ws('/app/lanbridge/tunnel/tcp') if hasattr(s,'connect_ws') else websocket.create_connection(s.origin.replace('http','ws',1)+'/app/lanbridge/tunnel/tcp',timeout=15,cookie=s.cookie(),origin=s.origin,http_no_proxy=['*'])
         with self.lock: self.sockets.add(ws)
         try:
-            ws.send(json.dumps({'v':1,'host':host,'port':port,'scope':self.state['scope'],'halfClose':getattr(s,'half_close',False)}))
+            ws.send(json.dumps({'v':1,'host':host,'port':port,'scope':scope or self.state['scope'],'halfClose':getattr(s,'half_close',False)}))
             ack=json.loads(ws.recv())
             if not ack.get('ok'): raise ValueError('隧道拒绝连接')
             ws.half_close=ack.get('halfClose',False) is True
@@ -291,6 +297,55 @@ class FnClient:
             with self.lock: self.sockets.discard(ws)
             raise
 
+    def start_forward(self, ident, local_port, host, port):
+        if self.state['phase']!='connected': raise ValueError('请先连接飞牛')
+        if self.state.get('forward_policy_valid') is not True: raise ValueError('NAS 局域网桥未提供端口映射访问范围')
+        try: target=ipaddress.ip_address(host)
+        except ValueError as exc: raise ValueError('目标必须填写局域网 IPv4 地址') from exc
+        networks=[]
+        for value in self.state.get('networks',[]):
+            try: networks.append(ipaddress.ip_network(value,strict=False))
+            except ValueError: continue
+        if target.version!=4 or target.is_loopback or target.is_link_local or target.is_multicast or target.is_unspecified or not any(target in network and target not in (network.network_address,network.broadcast_address) for network in networks):
+            raise ValueError('目标不在 NAS 允许的局域网范围内')
+        local_port=int(local_port);port=int(port)
+        reserved={18792,18795,self.port,self.state.get('socks_port')}
+        if not 1024<=local_port<=65535 or local_port in reserved: raise ValueError('本机端口需为 1024-65535，且不能占用工具箱端口')
+        if not 1<=port<=65535: raise ValueError('目标端口无效')
+        with self.lock:
+            if ident in self.forward_servers: return local_port
+            if any(runtime['server'].server_address[1]==local_port for runtime in self.forward_servers.values()): raise ValueError('本机端口已被其他映射使用')
+        owner=self
+        gate=threading.BoundedSemaphore(16)
+        tracker=set()
+        class Handler(socketserver.BaseRequestHandler):
+            def handle(self):
+                if not gate.acquire(blocking=False):
+                    self.request.close();return
+                try: owner.relay(self.request,str(target),port,scope='lan',tracker=tracker)
+                finally: gate.release()
+        try: server=SocksServer(('127.0.0.1',local_port),Handler)
+        except OSError as exc: raise ValueError(f'本机端口 {local_port} 无法监听，请更换端口') from exc
+        with self.lock:
+            if self.state['phase']!='connected':
+                server.server_close();raise ValueError('飞牛连接已断开')
+            self.forward_servers[ident]={'server':server,'sockets':tracker}
+        threading.Thread(target=server.serve_forever,daemon=True).start()
+        return server.server_address[1]
+
+    def stop_forward(self, ident):
+        with self.lock: runtime=self.forward_servers.pop(ident,None)
+        if runtime:
+            runtime['server'].shutdown();runtime['server'].server_close()
+            with self.lock: sockets=list(runtime['sockets'])
+            for value in sockets:
+                with contextlib.suppress(Exception):
+                    if isinstance(value,socket.socket): value.shutdown(socket.SHUT_RDWR);value.close()
+                    else:value.close(timeout=1)
+
+    def forward_ids(self):
+        with self.lock: return set(self.forward_servers)
+
     @staticmethod
     def exact(sock,n):
         result=b''
@@ -300,24 +355,18 @@ class FnClient:
             result+=b
         return result
 
-    def handle(self,sock):
+    def relay(self,sock,host,port,socks=False,scope=None,tracker=None):
         ws=None
         established=False
-        with self.lock: self.sockets.add(sock)
+        with self.lock:
+            self.sockets.add(sock)
+            if tracker is not None:tracker.add(sock)
         sock.settimeout(300)
         try:
-            version,n=self.exact(sock,2)
-            methods=self.exact(sock,n)
-            if version!=5 or 0 not in methods: sock.sendall(bytes([5,255]));return
-            sock.sendall(bytes([5,0]))
-            version,cmd,_,atype=self.exact(sock,4)
-            if version!=5 or cmd!=1: sock.sendall(bytes([5,7,0,1,0,0,0,0,0,0]));return
-            if atype==1: host=socket.inet_ntoa(self.exact(sock,4))
-            elif atype==3: host=self.exact(sock,self.exact(sock,1)[0]).decode('ascii')
-            else: sock.sendall(bytes([5,8,0,1,0,0,0,0,0,0]));return
-            port=int.from_bytes(self.exact(sock,2),'big')
-            ws=self.open(host,port)
-            sock.sendall(bytes([5,0,0,1,0,0,0,0,0,0]))
+            ws=self.open(host,port,scope=scope)
+            with self.lock:
+                if tracker is not None:tracker.add(ws)
+            if socks: sock.sendall(bytes([5,0,0,1,0,0,0,0,0,0]))
             established=True
             with self.lock: self.state['connections']+=1
             upload_done=threading.Event()
@@ -348,7 +397,7 @@ class FnClient:
                     sock.sendall(b)
                     with self.lock: self.state['rx']+=len(b)
         except Exception:
-            if not established:
+            if socks and not established:
                 with contextlib.suppress(Exception): sock.sendall(bytes([5,5,0,1,0,0,0,0,0,0]))
         finally:
             if ws:
@@ -358,7 +407,27 @@ class FnClient:
             with self.lock:
                 self.sockets.discard(sock)
                 self.sockets.discard(ws)
+                if tracker is not None:
+                    tracker.discard(sock);tracker.discard(ws)
                 if ws: self.state['connections']=max(0,self.state['connections']-1)
+
+    def handle(self,sock):
+        try:
+            sock.settimeout(300)
+            version,n=self.exact(sock,2)
+            methods=self.exact(sock,n)
+            if version!=5 or 0 not in methods: sock.sendall(bytes([5,255]));return
+            sock.sendall(bytes([5,0]))
+            version,cmd,_,atype=self.exact(sock,4)
+            if version!=5 or cmd!=1: sock.sendall(bytes([5,7,0,1,0,0,0,0,0,0]));return
+            if atype==1: host=socket.inet_ntoa(self.exact(sock,4))
+            elif atype==3: host=self.exact(sock,self.exact(sock,1)[0]).decode('ascii')
+            else: sock.sendall(bytes([5,8,0,1,0,0,0,0,0,0]));return
+            port=int.from_bytes(self.exact(sock,2),'big')
+        except Exception:
+            with contextlib.suppress(Exception): sock.sendall(bytes([5,5,0,1,0,0,0,0,0,0]));sock.close()
+            return
+        self.relay(sock,host,port,socks=True)
 
     def probe(self):
         start=time.monotonic()
@@ -378,6 +447,8 @@ class FnClient:
 
     def stop(self):
         self.stop_event.set()
+        with self.lock: forward_ids=list(self.forward_servers)
+        for ident in forward_ids:self.stop_forward(ident)
         if self.server:
             self.server.shutdown();self.server.server_close();self.server=None
         with self.lock: sockets=list(self.sockets);self.sockets.clear()

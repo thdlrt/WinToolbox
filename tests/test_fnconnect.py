@@ -257,3 +257,82 @@ def test_socks_half_close_receives_response_after_client_eof():
             assert client.exact(sock,len(body))==body
             assert sock.recv(1)==b''
     finally:client.stop();server.shutdown()
+
+
+def test_selective_forward_relays_raw_tcp_on_loopback_with_lan_scope():
+    from websockets.sync.server import serve
+    handshakes=[]
+    def handle(ws):
+        hello=json.loads(ws.recv());handshakes.append(hello)
+        ws.send(json.dumps({'ok':True,'halfClose':True}))
+        while True:
+            message=ws.recv()
+            if isinstance(message,str):
+                assert json.loads(message)['eof'];ws.send(json.dumps({'eof':True}));break
+            ws.send(message)
+    server=serve(handle,'127.0.0.1',0);remote_port=server.socket.getsockname()[1]
+    threading.Thread(target=server.serve_forever,daemon=True).start()
+    class Session:
+        origin=f'http://127.0.0.1:{remote_port}'
+        half_close=True
+        policy={'allowPublic':True,'networks':['192.168.100.0/24']}
+        def login(self,*args): pass
+        def cookie(self): return ''
+        def close(self): pass
+        def maintain(self): pass
+    probe=socket.socket();probe.bind(('127.0.0.1',0));local_port=probe.getsockname()[1];probe.close()
+    client=FnClient(session_factory=lambda origin:Session(),port=0)
+    try:
+        client.start('http://192.168.100.246:5666','fixture','fixture','all')
+        client.start_forward('fixture',local_port,'192.168.100.20',8123)
+        with socket.create_connection(('127.0.0.1',local_port),timeout=5) as connection:
+            body=b'GET /api/status HTTP/1.1\r\nHost: device\r\n\r\n'
+            connection.sendall(body)
+            assert client.exact(connection,len(body))==body
+        client.stop_forward('fixture')
+        with pytest.raises(OSError): socket.create_connection(('127.0.0.1',local_port),timeout=.2)
+        assert handshakes and handshakes[0]['scope']=='lan'
+        assert handshakes[0]['host']=='192.168.100.20' and handshakes[0]['port']==8123
+    finally:client.stop();server.shutdown()
+
+
+def test_selective_forward_requires_valid_nas_policy_and_allowed_target():
+    class Session:
+        origin='http://127.0.0.1:9';half_close=False
+        def login(self,*args): pass
+        def close(self): pass
+        def maintain(self): pass
+    client=FnClient(session_factory=lambda origin:Session(),port=0)
+    try:
+        client.start('http://192.168.100.246:5666','fixture','fixture')
+        with pytest.raises(ValueError,match='访问范围'):client.start_forward('one',18880,'192.168.100.20',80)
+    finally:client.stop()
+    Session.policy={'allowPublic':False,'networks':['192.168.100.0/24']}
+    client=FnClient(session_factory=lambda origin:Session(),port=0)
+    try:
+        client.start('http://192.168.100.246:5666','fixture','fixture')
+        for host in ('127.0.0.1','169.254.1.2','192.168.101.2','8.8.8.8'):
+            with pytest.raises(ValueError):client.start_forward('one',18880,host,80)
+        with pytest.raises(ValueError):client.start_forward('one',18792,'192.168.100.20',80)
+    finally:client.stop()
+
+
+def test_forward_rules_persist_toggle_and_reject_unsafe_targets(tmp_path):
+    class Client:
+        def __init__(self):self.active=set();self.started=[]
+        def status(self):return {'phase':'connected'}
+        def forward_ids(self):return set(self.active)
+        def start_forward(self,ident,local_port,host,port):self.active.add(ident);self.started.append((ident,local_port,host,port))
+        def stop_forward(self,ident):self.active.discard(ident)
+    client=Client();path=tmp_path/'fnconnect/forwards.json';rules=fnconnect.ForwardRules(path,client)
+    item=rules.save({'name':'Home API','target_host':'192.168.100.20','target_port':8123,'local_port':0,'kind':'http','enabled':True})
+    assert item['state']=='listening' and item['local_endpoint'].startswith('http://127.0.0.1:')
+    assert client.started[0][2:]==('192.168.100.20',8123)
+    assert json.loads(path.read_text('utf-8'))['rules'][0]['id']==item['id']
+    rules.enable(item['id'],False);assert rules.list()['rules'][0]['state']=='disabled'
+    loaded=fnconnect.ForwardRules(path,client);assert loaded.list()['rules'][0]['name']=='Home API'
+    loaded.delete(item['id']);assert loaded.list()['rules']==[]
+    base={'name':'bad','target_port':80,'local_port':18890,'kind':'http','enabled':True}
+    for host in ('device.local','8.8.8.8','127.0.0.1','169.254.1.2'):
+        with pytest.raises(ValueError):rules.save({**base,'target_host':host})
+    with pytest.raises(ValueError):rules.save({**base,'target_host':'192.168.100.20','local_port':18792})

@@ -15,7 +15,7 @@ from pathlib import Path
 from ._common import atomic_write, child_path, extract_zip, write_json
 
 MAGIC = b"WTBXENC1"
-ALLOWED = {"settings.json", "engine.sqlite3", "knowledge", "plugins", "models", "runtimes", "media", "library", "live", "sessions", "jobs", "artifacts", "file-operations", "practice", "expenses"}
+ALLOWED = {"settings.json", "engine.sqlite3", "knowledge", "plugins", "models", "runtimes", "media", "library", "live", "sessions", "jobs", "artifacts", "file-operations", "practice", "expenses", "fnconnect"}
 MEDIA_EXTENSIONS = {".wav", ".mp3", ".mp4", ".mkv", ".mov", ".m4a", ".flac", ".ogg", ".webm", ".avi", ".aac", ".opus"}
 
 

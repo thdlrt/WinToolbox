@@ -1,12 +1,12 @@
-# WinToolbox 0.1.20 验收记录
+# WinToolbox 0.1.21 验收记录
 
-最终回归日期：2026-09-14。开发与实际执行环境为 Windows 11 x64、Ryzen 9 9950X、RTX 5080 16 GB、64 GB 内存。
+最终回归日期：2026-09-15。开发与实际执行环境为 Windows 11 x64、Ryzen 9 9950X、RTX 5080 16 GB、64 GB 内存。
 
 ## 自动测试
 
 完整测试命令：`core/.venv/Scripts/python.exe -m pytest tests -q`。
 
-最终核心测试：**338 passed**。覆盖引擎、语音与字幕、资料索引、口语练习、记账、WebDAV、扩展、备份迁移、Shizuku 和 FN Connect 等功能。
+最终核心测试：**341 passed**。覆盖引擎、语音与字幕、资料索引、口语练习、记账、WebDAV、扩展、备份迁移、Shizuku 和 FN Connect 等功能。
 
 - 任务队列、状态保存、取消、重试、输入/参数指纹检查点。
 - 字幕时间校验、片段对应翻译、全稿分段总结、实际 FFmpeg 字幕压制与配音音轨混合。
@@ -17,6 +17,7 @@
 - AES-GCM 密码拒绝、SQLite WAL 快照、跨目录路径重定位、DPAPI 密钥恢复、外部输出文件迁移。
 - WebSocket 转写事件、Qwen 临时文本、结束尾句、重连补转写、取消、双路时间轴和重复问题。
 - 独立 JSON-RPC 进程 stdout 协议纯净度、未知方法错误、删除服务清除密钥、新版本数据库拒绝降级。
+- FN API 端口映射的原始 TCP 往返、固定 LAN 范围、局域网策略校验、端口限制、规则持久化与启停删除。
 
 Python 3.12 的 `audioop` 弃用提示不影响当前随应用提供的3.12运行环境；升级 Python 3.13 前需替换实时重采样实现。
 
@@ -38,6 +39,7 @@ Python 3.12 的 `audioop` 弃用提示不影响当前随应用提供的3.12运�
 | 真实安装 | NSIS静默安装到项目隔离目录成功，退出码0；安装版实际窗口启动并连接随包Python后台 |
 | 发布环境隔离 | 安装版和便携版均在仅保留Windows系统PATH的环境检查RPC入口，随包FFmpeg实际生成并探测合成音频；追加首次启动的双次设备枚举检查 |
 | 0.1.20 发布包 | NSIS 安装包与干净便携 ZIP 构建成功；ZIP 无用户 data、密钥、WebDAV 设置、数据库或备份，解压后独立 RPC 与 FFmpeg 冒烟测试通过 |
+| 0.1.21 发布包 | NSIS 安装包与干净便携 ZIP 构建成功；ZIP 6527 项中无用户 data、设置、数据库、WebDAV 凭据或备份；安装版与解压后的便携版均完成 8 项独立 RPC 和包内 FFmpeg 合成音频验证，安装版静默卸载通过 |
 | 安装清理 | 隔离测试安装与卸载均退出码0；开发预览进程已停止，交付目录保留安装包与便携包 |
 
 详细功能验证见 [FEATURE_VALIDATION.md](FEATURE_VALIDATION.md)。原始实际GPU与文档证据在项目构建目录 `.build/gpu-validation/validation.json` 和 `.build/document-runtime-validation.json`。

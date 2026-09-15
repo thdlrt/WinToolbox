@@ -25,7 +25,7 @@ const nav: { id: Page; name: string; icon: typeof House }[] = [
   { id: 'practice', name: '口语练习', icon: Speech },
   { id: 'expenses', name: '记账', icon: ReceiptText },
   { id: 'shizuku', name: 'Shizuku', icon: Smartphone },
-  { id: 'fnconnect', name: '回家 VPN', icon: Radio },
+  { id: 'fnconnect', name: 'FN 远程访问', icon: Radio },
   { id: 'codex', name: 'Codex 配置', icon: Command },
   { id: 'files', name: '文件整理', icon: FolderSync }, { id: 'plugins', name: '扩展工具', icon: Boxes },
   { id: 'settings', name: '设置', icon: Settings2 },

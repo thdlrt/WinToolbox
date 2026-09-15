@@ -1,6 +1,6 @@
 [package]
 name = "wintoolbox"
-version = "0.1.20"
+version = "0.1.21"
 description = "Windows 语音与效率工具箱"
 license = "MIT"
 repository = "https://github.com/thdlrt/WinToolbox"

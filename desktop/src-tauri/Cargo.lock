@@ -5045,7 +5045,7 @@ dependencies = [
 
 [[package]]
 name = "wintoolbox"
-version = "0.1.20"
+version = "0.1.21"
 dependencies = [
  "rfd",
  "serde",

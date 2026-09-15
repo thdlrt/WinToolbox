@@ -12,7 +12,7 @@ const tools: { id: Page; name: string; icon: typeof AudioLines; tags: string[] }
   { id: 'practice', name: '口语练习', icon: Speech, tags: ['英文', '朗读', '音标', '循环', '听力'] },
   { id: 'expenses', name: '记账', icon: ReceiptText, tags: ['AI 订阅', '报销', '发票', '附件', '费用'] },
   { id: 'shizuku', name: 'Shizuku', icon: Smartphone, tags: ['安卓', '无线调试', '启动', '手机', 'ADB'] },
-  { id: 'fnconnect', name: '回家 VPN', icon: Radio, tags: ['FN Connect', '局域网', '代理', 'TUN'] },
+  { id: 'fnconnect', name: 'FN 远程访问', icon: Radio, tags: ['FN Connect', '端口映射', '局域网', '代理'] },
   { id: 'codex', name: 'Codex 配置', icon: Command, tags: ['模型', '上下文', '开发'] },
   { id: 'files', name: '文件整理', icon: FolderSync, tags: ['移动', '重命名', '批量'] },
   { id: 'plugins', name: '扩展工具', icon: Boxes, tags: ['插件', '安装', '扩展'] },

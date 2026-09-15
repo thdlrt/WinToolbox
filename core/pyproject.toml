@@ -1,6 +1,6 @@
 [project]
 name = "wintoolbox-core"
-version = "0.1.20"
+version = "0.1.21"
 description = "Windows toolbox media and extensible job engine"
 license = "MIT"
 requires-python = ">=3.12"
