@@ -1291,7 +1291,7 @@ wheels = [
 
 [[package]]
 name = "wintoolbox-core"
-version = "0.1.1"
+version = "0.1.22"
 source = { editable = "." }
 dependencies = [
     { name = "cryptography" },
@@ -1302,6 +1302,7 @@ dependencies = [
     { name = "pypdfium2" },
     { name = "python-docx" },
     { name = "python-pptx" },
+    { name = "pyyaml" },
     { name = "soundcard" },
     { name = "sounddevice" },
     { name = "soundfile" },
@@ -1326,6 +1327,7 @@ requires-dist = [
     { name = "pypdfium2", specifier = ">=4.30,<6" },
     { name = "python-docx", specifier = ">=1.1,<2" },
     { name = "python-pptx", specifier = ">=1.0,<2" },
+    { name = "pyyaml", specifier = ">=6,<7" },
     { name = "soundcard", specifier = ">=0.4,<1" },
     { name = "sounddevice", specifier = ">=0.5,<1" },
     { name = "soundfile", specifier = ">=0.13,<1" },

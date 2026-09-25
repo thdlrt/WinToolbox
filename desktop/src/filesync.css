@@ -1,0 +1,9 @@
+.filesync-rules { display: grid; gap: 8px; }
+.filesync-rule { display: grid; gap: 6px; padding: 12px; text-align: left; border: 1px solid var(--border); border-radius: 8px; background: transparent; color: inherit; cursor: pointer; }
+.filesync-rule.selected { border-color: var(--accent, #547cec); background: rgba(84, 124, 236, .08); }
+.filesync-rule span, .filesync-rule small, .filesync-operation small { overflow-wrap: anywhere; opacity: .75; }
+.filesync-plan { max-height: 420px; overflow: auto; }
+.filesync-operation { display: flex; align-items: center; gap: 16px; padding: 12px 0; border-bottom: 1px solid var(--border); }
+.filesync-operation > div { flex: 1; min-width: 0; }
+.filesync-operation strong, .filesync-operation small { display: block; overflow-wrap: anywhere; }
+@media (max-width: 760px) { .filesync-operation { flex-wrap: wrap; } }

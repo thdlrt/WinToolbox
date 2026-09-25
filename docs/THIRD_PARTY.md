@@ -5,6 +5,8 @@ WinToolbox uses the following third-party components. Their respective license t
 | Component | Project and license information |
 |---|---|
 | Tauri | https://github.com/tauri-apps/tauri (MIT / Apache-2.0) |
+| drag-rs | https://github.com/crabnebula-dev/drag-rs (MIT / Apache-2.0; native file drag-out) |
+| Mem Reduct 3.5.2 | https://github.com/henrypp/memreduct (GPL-3.0-or-later; unmodified standalone x64 helper, license/signature/source reference in tools/memreduct) |
 | React | https://github.com/facebook/react (MIT) |
 | Python | https://www.python.org/psf/license/ |
 | uv | https://github.com/astral-sh/uv (MIT / Apache-2.0) |
@@ -31,3 +33,5 @@ The 45 short MP3 examples under `desktop/public/phonetics/audio` contain only Wi
 
 
 Mihomo 1.19.30 (GPL-3.0), Windows amd64: https://github.com/MetaCubeX/mihomo/tree/v1.19.30 . The unmodified executable is bundled for optional TUN routing. Official release ZIP SHA-256: 22c09fd67673895ef7cd6b1820563918275c3d316f2462b306208675118db3c0. Source and license: https://github.com/MetaCubeX/mihomo .
+
+Mem Reduct 3.5.2 (GPL-3.0-or-later) is bundled as an unmodified, independent optional application for its interactive settings and automatic cleaning. Source: https://github.com/henrypp/memreduct/tree/v.3.5.2 . tools/memreduct retains its license, upstream source link and signature. WinToolbox's manual silent cleaner is separately implemented using Windows native memory interfaces; no Mem Reduct source code is incorporated.

@@ -1,0 +1,22 @@
+.gpu-guard-page { display: grid; gap: 18px; }
+.gpu-power-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; }
+.gpu-power-grid > div { display: grid; gap: 9px; }
+.gpu-power-grid span { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; }
+.gpu-power-grid strong { font-size: 20px; font-weight: 600; }
+.gpu-app-list > div { display: flex; align-items: center; gap: 12px; padding: 8px 0; }
+.gpu-app-list > div > span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.gpu-app-list small, .gpu-table small { display: block; opacity: .65; font-size: 11px; }
+.gpu-table-wrap { overflow-x: auto; }
+.gpu-table { border-collapse: collapse; width: 100%; font-size: 13px; }
+.gpu-table th, .gpu-table td { padding: 10px 8px; text-align: left; }
+.gpu-table td:first-child { max-width: 320px; overflow-wrap: anywhere; }
+.gpu-table th { font-weight: 500; opacity: .65; }
+.gpu-guard-page details { margin-top: 14px; }
+.gpu-guard-page summary { cursor: pointer; font-size: 13px; }
+@media (max-width: 800px) { .gpu-power-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .gpu-guard-page .input-action { flex-wrap: wrap; } .gpu-guard-page .input-action input { width: 100%; } }
+
+.gpu-guard-state { margin-bottom: 16px; }
+.gpu-sample-time { margin-top: 12px; }
+.gpu-help { padding: 0 4px; }
+.gpu-help[open] > summary { margin-bottom: 16px; }
+.gpu-help .small-note { margin-top: 10px; }

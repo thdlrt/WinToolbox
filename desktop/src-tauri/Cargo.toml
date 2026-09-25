@@ -1,6 +1,6 @@
 [package]
 name = "wintoolbox"
-version = "0.1.21"
+version = "0.1.22"
 description = "Windows 语音与效率工具箱"
 license = "MIT"
 repository = "https://github.com/thdlrt/WinToolbox"
@@ -16,3 +16,4 @@ serde_json = "1"
 rfd = "0.15"
 tauri-plugin-single-instance = "2"
 tauri-plugin-global-shortcut = "2"
+drag = "2.1.1"

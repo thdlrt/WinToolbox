@@ -1,0 +1,6 @@
+interface:
+  display_name: "项目记忆"
+  short_description: "检索和维护项目与全局记忆"
+  default_prompt: "使用 $agent-knowledge 读取当前项目最相关的记忆与全局知识。"
+policy:
+  allow_implicit_invocation: true

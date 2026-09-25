@@ -6,6 +6,7 @@ import { Button, CheckField, cx, Empty, Field, IconButton, Modal, Notice, PathIn
 import ModelSetup from './ModelSetup';
 import ToolJobs from '../ToolJobs';
 import WebDavSync from './WebDavSync';
+import GeneralSettings from './GeneralSettings';
 
 const roleNames: Record<string, string> = { transcribe: '文件转写', live_asr: '实时识别', translate: '翻译', chat: '总结与问答', vision: '图表理解', embedding: '资料库索引', tts: '语音合成' };
 const roleHints: Record<string, string> = { transcribe: '音视频文件的语音识别', live_asr: '实时会话流式识别', translate: '字幕与文件名翻译', chat: '内容总结与实时问答', vision: '资料库扫描页、表格与图表', embedding: '预先建立资料库索引，供实时问答检索', tts: 'API 配音与声音合成' };
@@ -13,7 +14,7 @@ const defaultUrls = { openai: 'https://api.openai.com/v1', dashscope: 'https://d
 
 export default function SettingsPage() {
   const { connected, info, settings, run, error, success, refreshSettings, track, theme, setTheme, jobs } = useApp();
-  const [tab, setTab] = useState('model');
+  const [tab, setTab] = useState(() => { const requested = sessionStorage.getItem('wintoolbox-settings-tab'); sessionStorage.removeItem('wintoolbox-settings-tab'); return ['data','model','appearance','general'].includes(requested || '') ? requested! : 'general'; });
   const [advanced, setAdvanced] = useState(false);
   const [advancedTab, setAdvancedTab] = useState('providers');
   const [provider, setProvider] = useState<Provider>();
@@ -59,7 +60,8 @@ export default function SettingsPage() {
   const importBackup = async () => { setBusy('import'); const job = await run(() => rpc<Job>('backups.import', { path: importPath, ...(importPassword ? { password: importPassword } : {}) })); if (job) { track(job, '恢复任务已提交。完成后重新打开工具箱以加载恢复的配置。'); setRestoreOpen(false); setImportPassword(''); } setBusy(''); };
 
   return <>
-    <div className="settings-tabs tab-bar">{[['model', '模型'], ['data', '数据与备份'], ['appearance', '外观']].map(([id, label]) => <button key={id} className={cx(tab === id && 'active')} onClick={() => setTab(id)}>{label}</button>)}</div>
+    <div className="settings-tabs tab-bar">{[['general', '通用'], ['model', '模型'], ['data', '数据与备份'], ['appearance', '外观']].map(([id, label]) => <button key={id} className={cx(tab === id && 'active')} onClick={() => setTab(id)}>{label}</button>)}</div>
+    {tab === 'general' && <GeneralSettings />}
     {tab === 'model' && <><ModelSetup /><details className="details settings-advanced" open={advanced} onToggle={e => setAdvanced(e.currentTarget.open)}><summary>高级设置</summary><div className="tab-bar advanced-tabs">{[['providers', '其他 API 服务'], ['roles', '功能模型'], ['models', '模型管理']].map(([id, label]) => <button key={id} className={cx(advancedTab === id && 'active')} onClick={() => setAdvancedTab(id)}>{label}</button>)}</div>
     {advanced && advancedTab === 'providers' && <><Section action={<Button variant="primary" disabled={!connected} onClick={addProvider}><Plus size={16} />添加服务</Button>}>
       {settings?.providers?.length ? <div className="provider-list">{settings.providers.map(item => <article className="provider-row" key={item.id}><div className="provider-info"><h3>{item.name}</h3><p>{item.base_url}</p><span className={cx('key-status', item.has_key && 'configured')}><KeyRound size={12} />{item.has_key ? '密钥已配置' : '未配置密钥'}</span>{testResult[item.id] && <div className={cx('test-result', testResult[item.id].ok ? 'passed' : 'failed')}>{testResult[item.id].message}{testResult[item.id].latency_ms ? ` · ${testResult[item.id].latency_ms} ms` : ''}</div>}</div><div className="provider-actions"><Button busy={busy === `test-${item.id}`} onClick={() => void test(item.id)}><Link2 size={14} />测试</Button><Button onClick={() => setProvider({ ...item, api_key: '' })}>编辑</Button><IconButton label={`移除 ${item.name}`} onClick={() => setRemovingProvider(item)}><Trash2 size={15} /></IconButton></div></article>)}</div> : <Empty title="暂无 API 服务" />}

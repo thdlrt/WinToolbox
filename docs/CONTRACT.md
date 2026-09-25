@@ -1,5 +1,7 @@
 # Backend and desktop contract v1
 
+GPU guard (local development): `gpu_guard.status` returns session enabled/active state, local apps, pending_restore count, power, last sample, errors and software_rendering flag. `gpu_guard.apps {path,remove?}` edits existing .exe paths only while disabled and fully restored. `gpu_guard.enable {enabled:bool}` applies reversible per-user power-saving preferences on battery, restores on AC/unknown power, stop and exit; no firmware/device disabling or process termination. `gpu_guard.rendering {enabled:bool}` changes a per-user, per-toolbox software-rendering startup flag; restart required. `gpu_guard.scan {}` and `gpu_guard.power {}` return background jobs: scan uses OS counters, power explicitly invokes nvidia-smi once and may wake the dGPU. `gpu_guard.activity` emits a rate-limited in-app message. Machine-bound config/recovery lives outside synced app data in LOCALAPPDATA/WinToolbox/gpu-guard; lazy first use recovers prior writes, protected by an exclusive local lock. The guard starts disabled each session. CPU watts unsupported, missing readings are null, no power-state inference from zero utilization. See GPU-GUARD.md.
+
 Transport: newline JSON-RPC 2.0 stdin requests {jsonrpc,id,method,params}; stdout result/error. Notifications {jsonrpc:"2.0",method:"event",params:{type,...}}. Rust command rpc(method: string, params: object) -> result. Rust forwards notifications as Tauri event `backend-event`. Rust native commands: pick_files(multiple,filters?), pick_directory(), open_path(path), set_overlay(visible), app_paths(). Frontend src/api.ts wraps these; browser preview must show backend unavailable, not fake results. Overlay route `?overlay=1` shares backend.
 
 Python conventions: feature modules expose `register(app)` and call `app.register(name, handler)`; handler gets params dict, returns JSON-compatible result. app.data_dir: pathlib.Path; app.emit(type, **fields); app.jobs.submit(tool,params,runner)-> job dict, where runner(job) and job.progress(percent,message), job.check_cancelled(), job.artifact(path,kind,label), job.id. app.settings.get()->dict; app.settings.update(dict)->dict. app.providers.chat(messages, role='chat', stream_callback=None)->str; app.providers.embed(texts)->list[list[float]]. `app.jobs` created before registering features. Feature package register_all(app) loads its modules. Secrets are never returned by settings.get; use app.settings.secret(provider_id) for provider secrets.
@@ -67,3 +69,41 @@ The first TUN start installs WinToolboxTun with one UAC prompt. A fixed C# Local
 ### Selective FN API port mapping (0.1.21)
 `fnconnect.forward.list`, `fnconnect.forward.save`, `fnconnect.forward.enable` and `fnconnect.forward.delete` manage up to 24 persisted rules under `data/fnconnect/forwards.json`; the directory participates in backup and WebDAV snapshots. A rule maps a fixed `127.0.0.1:local_port` to one literal LAN IPv4 and TCP port through the authenticated FN tunnel. Enabled rules wait while disconnected and restart after login. Mappings always request `scope:'lan'`, even when the main connection uses global scope; the target must match the validated networks returned by the NAS bridge, and missing/invalid policy fails closed. Hostnames, public/loopback/link-local/multicast targets, LAN listeners, UDP, IPv6 and reserved local ports are rejected. Each listener admits at most 16 concurrent connections. Disabling, deleting, disconnecting, reset and application exit close the listener and its active local/WS sockets. Rules contain no FN credentials or forwarded payloads.
 To remove the helper, run elevated PowerShell: `Stop-Service WinToolboxTun; sc.exe delete WinToolboxTun`. This unregisters the service and stops its routes; installed files may remain.
+
+## 项目记忆 v1
+
+所有 `memory.*` RPC 使用既有 JSON-RPC 与 Job。`memory.info` 返回 library/device/replica ID；`memory.projects` 返回 projects，locations 只包含当前设备；`available` 仅本机有效关联为真，`subscribed` 每设备独立。
+
+- `project.create {name,id?}`, `project.bind {project_id,path,kind,host?}`, `project.subscribe {project_id,enabled}`。
+- `entries {project_id?,scope?,kind?,query?,include_done?}` → entries；`entry.get {id}` → 含 heads/versions/conflict 的完整记录。
+- `entry.save {entry,parents}`；`conflict.resolve {id,entry,parents}` 必须基于当前 heads；`conflicts` 返回冲突列表。
+- `attachment.add {path}` → hash/name/size；`attachment.get {hash}` → 校验后本机路径；`export {project_id?}` → Markdown+附件 ZIP Job。
+- `sync.status`, `sync.configure {auto_sync,interval_seconds?}`, `sync.join {library_id}`；`sync.run {verify?}` 与 `sync.libraries` → Job。
+- `ssh.targets`、`ssh.configure {id?,host,remote_root,project_ids,enabled,project_id?,project_path?}`、`ssh.remove {id}`。`ssh.install {host,remote_root}`、`ssh.sync {host,remote_root,project_ids,project_id?,project_path?}` → Job。
+- `promote {id}` → 全局候选；`curate {id}` → AI 整理 Job；`curation.status/configure/run` 指定执行设备并触发待处理候选。
+
+操作 envelope：library_id/op_id/entity_id/entity_type/parents/replica_id/device_id/scope/project_id/data/created_at。记忆作用域只接受 project/global。设备路径、凭据不进入共享记录；旧 device 记录在本地备份升级为 global 后才参与同步。不同库拒绝导入，同 op_id 不同内容拒绝，缺失父版本保持待定，乱序接收不丢版本。项目位置与订阅保存在本地数据库但不进入共享操作。
+- `principles.get {target:"global"|"template"}` → text/hash/path?；`principles.save {target,text,hash}` 做版本保护。全局编辑仅原生 AGENTS 管理区块；模板仅新项目首次初始化使用。
+
+## 通用设置
+
+- `general.startup.get/set {enabled}`：读取/修改当前用户 `Run/WinToolbox`，以真实桌面 EXE 路径为准，不进入 WebDAV 设置同步。
+- `updates.check`：后台检查 GitHub 最新正式发布，返回版本、发行说明及匹配的安装方式。
+- `updates.download {version}`：重新核对远端版本，后台下载并校验 SHA-256，准备免安装版暂存文件。
+- 原生命令 `install_update {jobId}` 调用 `updates.prepare {job_id}`；只接受已完成的下载任务，后台任务未结束时拒绝安装。免安装版退出后替换程序文件，保留 data，并在替换异常时尝试恢复旧文件。
+# FileSync local synchronization
+
+`filesync.status` returns rules (without internal baselines), recent history and discovered legacy config/log paths. `filesync.save` accepts `id?`, `name`, `kind: file|folder`, `source`, `target`, `bidirectional`, `auto`, `deletes`, `interval` (5–86400 seconds), `retention` (0–3650 days), `include[]`, `exclude[]`; structural edits reset the baseline. `filesync.remove {id}` removes only the rule.
+
+`filesync.preview {id}`, `filesync.sync {id, token, resolutions?}`, and `filesync.import {path}` return ordinary jobs. Preview results contain `token`, `operations[{path,action,reason}]`, `changes`. Sync revalidates the token against the current rule and file content; conflict resolutions map relative paths (empty string for a single file) to `source|target`. Import accepts old JSON or JSONL logs, returns `imported`, per-rule `errors`, `recovered`, and never enables automatic sync. Internal polling submits `filesync.sync` with `automatic: true` and never resolves conflicts automatically.
+
+Rules/baselines/history use `filesync_rules` / `filesync_history` tables in the existing versioned engine SQLite database; no changes to the engine schema version are required for these additive tables. App restore initializes missing tables and disables automatic rules. App shutdown stops new poll jobs. All external writes run through background jobs and an execution gate; edits fail fast while a job owns the gate.
+# File relay (WebDAV inbox)
+
+`relay.get/save` read/write the local connection (`url`, `username`, `remote_path`, `download_dir`, write-only `password`). DPAPI ciphertext stays in `relay-connection.json`, excluded from ordinary backups and job records. Changing URL/account clears the old password; all saves rotate a configuration revision.
+
+`relay.test`, `relay.list {path}`, `relay.mkdir {path}`, `relay.upload {paths,path?,move?}`, `relay.download {paths}`, `relay.cleanup_preview {days}`, `relay.cleanup {token}` are background jobs. Paths inside the remote inbox are relative, slash-separated and traversal-checked. Upload is PUT-to-temporary then MOVE with Overwrite:F; move-local mode additionally downloads and hashes before removing a verified unchanged local file. Downloads publish without replacing existing local files. Upload returns uploaded/moved/error arrays for partial outcomes.
+
+Cleanup previews recursively enumerate files only; strong ETags and timestamps are required. Tokens are in-memory, revision-bound, single-use, valid for ten minutes. Execution rechecks metadata and uses conditional DELETE per file, retaining directories and concurrently modified files.
+
+`relay.context_menu {enabled?}` controls only HKCU WinToolboxRelay file/directory verbs. Native `--relay-upload <absolute paths...>` is handled on initial launch and by the single-instance callback, forwarded to `relay.enqueue {paths}` with copy-only semantics to the inbox root. `relay.open` emits navigation; `relay.pending` consumes the most recent cold-start request so a frontend that subscribes later still opens the correct page. `relay.*` jobs reject credential-shaped parameters; dedicated submission allowlists persisted fields.

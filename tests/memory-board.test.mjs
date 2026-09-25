@@ -1,0 +1,15 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { scopeTasks, shownStatuses, taskTime } from '../desktop/src/memoryBoard.ts';
+const now=Date.parse('2026-09-21T12:00:00Z');
+const projects=[{id:'pc',name:'本地项目',available:true,subscribed:true},{id:'remote',name:'服务器项目',available:false,subscribed:true},{id:'other',name:'另一台电脑',available:false,subscribed:false}];
+const entry=(id,project,status='active',extra={})=>({id,project_id:project,scope:'project',kind:'task',status,title:id,body:'正文',versions:[{created_at:'2026-09-20T12:00:00Z'}],...extra});
+const entries=[entry('a','pc'),entry('b','remote','blocked'),entry('c','other','done'),entry('d',undefined,'active',{scope:'global'}),entry('e',undefined,'active',{scope:'global'}),entry('old','pc','done',{versions:[{created_at:'2026-01-01'}]}),entry('knowledge','pc','active',{kind:'knowledge'})];
+const filters={project:'all',status:'unfinished',days:0,query:''};
+test('all cached tasks include projects absent from PC and global tasks',()=>assert.equal(scopeTasks(entries,projects,filters,now).length,6));
+test('local and subscribed ranges are independent of project presence',()=>{assert.equal(scopeTasks(entries,projects,{...filters,project:'local'},now).length,2);assert.equal(scopeTasks(entries,projects,{...filters,project:'subscribed'},now).length,3)});
+test('one project and unassigned ranges',()=>{assert.deepEqual(scopeTasks(entries,projects,{...filters,project:'project:remote'},now).map(e=>e.id),['b']);assert.equal(scopeTasks(entries,projects,{...filters,project:'unassigned'},now).length,2)});
+test('search includes project name and body',()=>assert.deepEqual(scopeTasks(entries,projects,{...filters,query:'服务器'},now).map(e=>e.id),['b']));
+test('updated-time range uses newest causal version not legacy timestamp',()=>{const changed=entry('changed','pc','active',{updated_at:'2025-01-01',versions:[{created_at:'2026-09-20'},{created_at:'2026-01-01'}]});assert.equal(scopeTasks([changed,entries[5]],projects,{...filters,days:7},now).length,1);assert.equal(taskTime(changed),Date.parse('2026-09-20'))});
+test('unknown timestamp excluded only when range selected',()=>{const item=entry('unknown','pc','active',{versions:[]});assert.equal(scopeTasks([item],projects,filters,now).length,1);assert.equal(scopeTasks([item],projects,{...filters,days:7},now).length,0)});
+test('status selection preserves completed history',()=>{assert.deepEqual(shownStatuses('unfinished'),['active','blocked']);assert.deepEqual(shownStatuses('done'),['done']);assert.deepEqual(shownStatuses('all'),['active','blocked','done'])});

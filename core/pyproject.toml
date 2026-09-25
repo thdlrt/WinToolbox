@@ -1,6 +1,6 @@
 [project]
 name = "wintoolbox-core"
-version = "0.1.21"
+version = "0.1.22"
 description = "Windows toolbox media and extensible job engine"
 license = "MIT"
 requires-python = ">=3.12"
@@ -10,7 +10,7 @@ dependencies = [
   "python-pptx>=1.0,<2", "cryptography>=44,<47", "huggingface-hub>=0.34,<2",
   "numpy>=2.0,<3", "sounddevice>=0.5,<1", "soundfile>=0.13,<1",
   "soundcard>=0.4,<1", "websocket-client>=1.8,<2",
-  "uv>=0.8,<1",
+  "uv>=0.8,<1", "PyYAML>=6,<7",
 ]
 
 [project.scripts]

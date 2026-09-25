@@ -1,12 +1,13 @@
 import { createContext, useContext } from 'react';
 import type { Job, Settings } from './api';
 
-export type Page = 'home' | 'media' | 'live' | 'captions' | 'practice' | 'phonetics' | 'expenses' | 'shizuku' | 'fnconnect' | 'codex' | 'files' | 'plugins' | 'settings';
+export type Page = 'home' | 'orb-settings' | 'ram' | 'memory' | 'media' | 'live' | 'captions' | 'practice' | 'phonetics' | 'expenses' | 'shizuku' | 'fnconnect' | 'gpu' | 'codex' | 'files' | 'filesync' | 'relay' | 'plugins' | 'settings';
 export interface AppInfo { name: string; version: string; data_dir: string; ffmpeg?: string | boolean; platform?: string }
 export interface AppContextValue {
   page: Page; navigate: (page: Page) => void; connected: boolean; info?: AppInfo;
   setBeforeNavigate?: (guard: (() => boolean | Promise<boolean>) | undefined) => void;
   settings?: Settings; jobs: Job[]; theme: string; setTheme: (value: string) => void;
+  pinnedTools: string[]; togglePinnedTool: (id: string) => void;
   refresh: () => Promise<void>; refreshJobs: () => Promise<void>; refreshSettings: () => Promise<void>;
   error: (error: unknown) => void; success: (message: string) => void;
   run: <T>(action: () => Promise<T>, successMessage?: string) => Promise<T | undefined>;

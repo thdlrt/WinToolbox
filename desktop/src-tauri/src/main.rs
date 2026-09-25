@@ -1,10 +1,29 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+mod orb;
 use serde::Deserialize;
 use serde_json::{json,Value};
 use std::{collections::HashMap,fs,io::{BufRead,BufReader,Write},path::{Path,PathBuf},process::{Child,ChildStdin,Command,Stdio},sync::{Arc,Mutex,mpsc,atomic::{AtomicBool,AtomicU64,Ordering}},time::Duration};
 use tauri::{AppHandle,Manager,Emitter,WebviewUrl,WebviewWindowBuilder};
 #[cfg(windows)] use std::os::windows::process::CommandExt;
 type Reply=Result<Value,String>;
+
+#[tauri::command]
+async fn drag_files(window:tauri::WebviewWindow,paths:Vec<String>)->Result<(),String>{
+    let root=fs::canonicalize(data_dir().join("relay-drag-cache")).map_err(|_|"请先缓存文件")?;
+    if paths.is_empty() || paths.len()>1000 {return Err("请选择需要拖出的文件".into())}
+    let files:Vec<PathBuf>=paths.into_iter().map(|p|{
+        let path=fs::canonicalize(p).map_err(|_|"缓存文件不存在，请重新准备".to_string())?;
+        if !path.starts_with(&root) || path==root {return Err("只能拖出中转站缓存文件".into())}
+        Ok(path)
+    }).collect::<Result<_,String>>()?;
+    let (tx,rx)=mpsc::channel();
+    let target=window.clone();
+    window.run_on_main_thread(move||{
+        let result=drag::start_drag(&target,drag::DragItem::Files(files),drag::Image::Raw(include_bytes!("../icons/32x32.png").to_vec()),|_,_|{},drag::Options{mode:drag::DragMode::Copy,..Default::default()}).map_err(|e|e.to_string());
+        let _=tx.send(result);
+    }).map_err(|e|e.to_string())?;
+    tauri::async_runtime::spawn_blocking(move||rx.recv().map_err(|e|e.to_string())?).await.map_err(|e|e.to_string())?
+}
 type Pending=Arc<Mutex<HashMap<u64,mpsc::Sender<Reply>>>>;
 struct Backend { child:Child, input:Arc<Mutex<ChildStdin>>, pending:Pending }
 #[derive(Default)] struct Bridge { backend:Mutex<Option<Backend>>, seq:AtomicU64 }
@@ -32,7 +51,7 @@ fn ensure_backend(app:&AppHandle,state:&Bridge)->Result<(Arc<Mutex<ChildStdin>>,
     let data=data_dir();fs::create_dir_all(data.join("logs")).map_err(|e|e.to_string())?;
     let log=fs::OpenOptions::new().create(true).append(true).open(data.join("logs/backend.log")).map_err(|e|e.to_string())?;
     let mut cmd=Command::new(&python);
-    cmd.args(["-u","-m","toolbox","--data-dir"]).arg(&data).current_dir(&core).env("PYTHONPATH",&core).env("PYTHONUTF8","1").env("WINTOOLBOX_PYTHON",&python).env("WINTOOLBOX_TOOLS",&tools).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::from(log));
+    cmd.args(["-u","-m","toolbox","--data-dir"]).arg(&data).current_dir(&core).env("PYTHONPATH",&core).env("PYTHONUTF8","1").env("WINTOOLBOX_APP_EXE",std::env::current_exe().unwrap_or_default()).env("WINTOOLBOX_APP_PID",std::process::id().to_string()).env("WINTOOLBOX_PYTHON",&python).env("WINTOOLBOX_TOOLS",&tools).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::from(log));
     if tools.join("ffmpeg.exe").is_file(){cmd.env("WINTOOLBOX_FFMPEG",tools.join("ffmpeg.exe")).env("WINTOOLBOX_FFPROBE",tools.join("ffprobe.exe"));}
     let mut child=hidden(&mut cmd).spawn().map_err(|e|format!("后台启动失败：{e}"))?;
     let input=Arc::new(Mutex::new(child.stdin.take().ok_or("后台输入不可用")?));
@@ -62,6 +81,16 @@ fn rpc_blocking(app:&AppHandle,state:&Bridge,method:String,params:Value)->Reply{
 }
 #[tauri::command] async fn rpc(app:AppHandle,method:String,params:Option<Value>)->Reply {
     tauri::async_runtime::spawn_blocking(move||rpc_blocking(&app,&app.state::<Bridge>(),method,params.unwrap_or(json!({})))).await.map_err(|e|e.to_string())?
+}
+#[tauri::command] async fn install_update(app:AppHandle,job_id:String)->Result<(),String>{
+    tauri::async_runtime::spawn_blocking(move||{
+        let value=rpc_blocking(&app,&app.state::<Bridge>(),"updates.prepare".into(),json!({"job_id":job_id}))?;
+        let script=value.get("script").and_then(Value::as_str).ok_or("更新脚本未准备完成")?;
+        let path=PathBuf::from(script);
+        if !path.starts_with(data_dir().join("updates")) || !path.is_file(){return Err("更新路径无效".into())}
+        hidden(Command::new("powershell.exe").args(["-NoProfile","-ExecutionPolicy","Bypass","-File"]).arg(path)).spawn().map_err(|e|e.to_string())?;
+        app.exit(0);Ok(())
+    }).await.map_err(|e|e.to_string())?
 }
 #[derive(Deserialize)] struct Filter {name:String,extensions:Vec<String>}
 fn dialog(filters:Option<Vec<Filter>>)->rfd::FileDialog{let mut d=rfd::FileDialog::new();if let Some(filters)=filters{for f in filters{d=d.add_filter(f.name,&f.extensions);}}d}
@@ -164,13 +193,40 @@ fn shutdown(app:&AppHandle){
         }
     }
 }
+fn relay_paths(args:&[String])->Vec<String>{
+    if args.get(1).map(String::as_str)!=Some("--relay-upload"){return Vec::new()}
+    args.iter().skip(2).filter(|p|Path::new(p).is_absolute()).cloned().collect()
+}
+fn relay_launch(app:&AppHandle,args:Vec<String>){
+    let paths=relay_paths(&args);if paths.is_empty(){return}
+    let handle=app.clone();std::thread::spawn(move||{
+        if let Err(message)=rpc_blocking(&handle,&handle.state::<Bridge>(),"relay.enqueue".into(),json!({"paths":paths})){
+            let _=handle.emit("backend-event",json!({"type":"relay.open","error":message}));
+        }
+    });
+}
+#[cfg(test)] mod relay_argument_tests {
+    use super::relay_paths;
+    #[test] fn accepts_only_explicit_upload_and_absolute_paths(){
+        let args=vec!["tool.exe".into(),"--relay-upload".into(),r"C:\notes\中文 file.txt".into(),"relative.txt".into()];
+        assert_eq!(relay_paths(&args),vec![r"C:\notes\中文 file.txt".to_string()]);
+        assert!(relay_paths(&["tool.exe".into(),r"C:\notes\file.txt".into()]).is_empty());
+    }
+}
 fn main(){
+    // Per-user opt-in troubleshooting mode. Never modify machine/global WebView2 settings.
+    // Set before Tauri creates any WebView2 environment, including the main window.
+    if std::env::var_os("LOCALAPPDATA").map(|base| std::path::PathBuf::from(base)
+        .join("WinToolbox/gpu-guard/software-rendering.flag").exists()).unwrap_or(false) {
+        let existing=std::env::var("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS").unwrap_or_default();
+        std::env::set_var("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS",format!("{} --disable-gpu",existing));
+    }
     use tauri::menu::{Menu,MenuItem};use tauri::tray::TrayIconBuilder;
     use tauri_plugin_global_shortcut::{GlobalShortcutExt,ShortcutState};
-    let app=tauri::Builder::default().manage(Bridge::default()).manage(CaptionsWindow::default())
-      .plugin(tauri_plugin_single_instance::init(|app,_,_|{if let Some(w)=app.get_webview_window("main"){let _=w.show();let _=w.set_focus();}}))
+    let app=tauri::Builder::default().manage(Bridge::default()).manage(CaptionsWindow::default()).manage(orb::OrbState::default())
+      .plugin(tauri_plugin_single_instance::init(|app,args,_|{let _=orb::open(app,"home");relay_launch(app,args);}))
       .plugin(tauri_plugin_global_shortcut::Builder::new().build())
-      .invoke_handler(tauri::generate_handler![rpc,pick_files,pick_directory,pick_save,app_paths,open_path,open_external,save_course_file,set_overlay,get_captions_window,set_captions_window,set_captions_click_through])
+      .invoke_handler(tauri::generate_handler![rpc,orb::set_orb,orb::orb_resize,orb::orb_save_position,orb::orb_action,drag_files,install_update,pick_files,pick_directory,pick_save,app_paths,open_path,open_external,save_course_file,set_overlay,get_captions_window,set_captions_window,set_captions_click_through])
       .setup(|app|{
           if let Some(main)=app.get_webview_window("main") {
               let handle=app.handle().clone();
@@ -179,14 +235,16 @@ fn main(){
                       api.prevent_close();
                       // Closing the main window keeps background tools alive; tray Quit exits.
                       if let Some(window)=handle.get_webview_window("main") { let _=window.hide(); }
+                      let h=handle.clone();tauri::async_runtime::spawn(async move{let _=orb::set_orb(h,true).await;});
                   }
               });
           }
           let show=MenuItem::with_id(app,"show","打开 WinToolbox",true,None::<&str>)?;let overlay=MenuItem::with_id(app,"overlay","显示实时悬浮窗",true,None::<&str>)?;let quit=MenuItem::with_id(app,"quit","退出",true,None::<&str>)?;
           let captions=MenuItem::with_id(app,"captions","显示并解锁字幕窗",true,None::<&str>)?;
           let stop_captions=MenuItem::with_id(app,"stop_captions","停止实时字幕",true,None::<&str>)?;
-          let menu=Menu::with_items(app,&[&show,&overlay,&captions,&stop_captions,&quit])?;
-          let mut tray=TrayIconBuilder::new().tooltip("WinToolbox").menu(&menu).on_menu_event(|app,event|{match event.id.as_ref(){"show"=>{if let Some(w)=app.get_webview_window("main"){let _=w.show();let _=w.set_focus();}},"overlay"=>{let handle=app.clone();tauri::async_runtime::spawn(async move{let _=set_overlay(handle,true).await;});},"captions"=>{let handle=app.clone();tauri::async_runtime::spawn(async move{let _=set_captions_window(handle,true).await;});},"stop_captions"=>{let handle=app.clone();std::thread::spawn(move||{let _=rpc_blocking(&handle,&handle.state::<Bridge>(),"captions.stop".into(),json!({}));});},"quit"=>app.exit(0),_=>{}}});
+          let ball=MenuItem::with_id(app,"orb","显示工具箱悬浮球",true,None::<&str>)?;
+          let menu=Menu::with_items(app,&[&show,&ball,&overlay,&captions,&stop_captions,&quit])?;
+          let mut tray=TrayIconBuilder::new().tooltip("WinToolbox").menu(&menu).on_menu_event(|app,event|{match event.id.as_ref(){"show"=>{let _=orb::open(app,"home");},"orb"=>{let h=app.clone();tauri::async_runtime::spawn(async move{let _=orb::set_orb(h,true).await;});},"overlay"=>{let handle=app.clone();tauri::async_runtime::spawn(async move{let _=set_overlay(handle,true).await;});},"captions"=>{let handle=app.clone();tauri::async_runtime::spawn(async move{let _=set_captions_window(handle,true).await;});},"stop_captions"=>{let handle=app.clone();std::thread::spawn(move||{let _=rpc_blocking(&handle,&handle.state::<Bridge>(),"captions.stop".into(),json!({}));});},"quit"=>app.exit(0),_=>{}}});
           if let Some(icon)=app.default_window_icon(){tray=tray.icon(icon.clone())}tray.build(app)?;
           for (shortcut,action) in [("Ctrl+Alt+Space","answer"),("Ctrl+Alt+Escape","cancel"),("Ctrl+Alt+ArrowLeft","previous")]{
               let a=action.to_string();let _=app.global_shortcut().on_shortcut(shortcut,move|app,_,event|{if event.state==ShortcutState::Pressed{let _=app.emit("backend-event",json!({"type":"hotkey","action":a}));if a!="previous"{let h=app.clone();let m=if a=="answer"{"live.answer"}else{"live.cancel"}.to_string();std::thread::spawn(move||{let _=rpc_blocking(&h,&h.state::<Bridge>(),m,json!({}));});}}});
@@ -203,6 +261,15 @@ fn main(){
           });
           Ok(())
       }).build(tauri::generate_context!()).expect("WinToolbox 启动失败");
+    if !cfg!(debug_assertions) {
+        let handle=app.handle().clone();
+        std::thread::spawn(move||{
+            if let Err(message)=rpc_blocking(&handle,&handle.state::<Bridge>(),"relay.initialize_menu".into(),json!({})) {
+                eprintln!("文件中转站菜单注册失败: {message}");
+            }
+        });
+    }
+    relay_launch(app.handle(),std::env::args().collect());
     app.run(|app,event|{if matches!(event,tauri::RunEvent::Exit){shutdown(app)}});
 }
 

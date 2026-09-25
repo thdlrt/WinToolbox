@@ -1,0 +1,19 @@
+.relay-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 10px 0; }
+.relay-toolbar > input { max-width: 320px; }
+.relay-toolbar > select { width: auto; }
+.relay-breadcrumb { margin: 4px 0 14px; overflow-wrap: anywhere; }
+.relay-breadcrumb button { border: 0; background: transparent; color: var(--accent, #3569e8); cursor: pointer; padding: 4px; }
+.relay-drop { border: 1px dashed var(--border); border-radius: 8px; padding: 12px; }
+.relay-drop.dragging { background: rgba(53,105,232,.12); border-color: #3569e8; }
+.relay-files { overflow-x: auto; max-height: 520px; margin-top: 12px; }
+.relay-row { display: grid; grid-template-columns: 22px minmax(170px,1fr) 90px 135px 140px; gap: 12px; align-items: center; padding: 9px 0; border-bottom: 1px solid var(--border); min-width: 560px; }
+.relay-row input { width: 16px; height: 16px; }
+.relay-head { font-weight: 600; }
+.relay-name { display: flex; gap: 8px; align-items: center; border: 0; background: transparent; color: inherit; text-align: left; cursor: pointer; min-width: 0; }
+.relay-name span { overflow-wrap: anywhere; }
+.relay-name svg { flex-shrink: 0; }
+.relay-cleanup-list { max-height: 240px; overflow: auto; margin: 12px 0; overflow-wrap: anywhere; }
+.relay-cleanup-list > div { padding: 5px 0; }
+.relay-log-row { display:flex; align-items:center; gap:12px; flex-wrap:wrap; padding:12px 0; border-bottom:1px solid var(--border); } .relay-name { touch-action:none; user-select:none; cursor:grab; } .relay-name:active { cursor:grabbing; }
+
+.relay-row-actions { display:flex; gap:6px; }

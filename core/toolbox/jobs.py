@@ -150,6 +150,8 @@ class Jobs:
             self.gpu_lock.release()
 
     def submit(self, tool, params, runner=None):
+        if tool.startswith('relay.') and any(key in params for key in ('password', 'password_dpapi', 'username', 'url', 'authorization')):
+            raise ValueError('中转站凭据只能通过 relay.save 保存，不得写入任务记录')
         if tool.startswith("fnconnect.") and any(k in params for k in ("password", "cookie", "secret", "authorization")):
             raise ValueError("飞牛凭据只能通过专用连接接口提交，不得写入任务记录")
         if tool == "shizuku.pair" and any(key in params for key in ("code", "pairing_code", "password")):

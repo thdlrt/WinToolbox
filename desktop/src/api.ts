@@ -24,6 +24,12 @@ async function desktopInvoke<T>(command: string, args?: Record<string, unknown>)
   return invoke<T>(command, args);
 }
 export const native = {
+  orb: (visible: boolean) => desktopInvoke<void>('set_orb', { visible }),
+  orbResize: (expanded: boolean, focus = false) => desktopInvoke<void>('orb_resize', { expanded, focus }),
+  orbSavePosition: () => desktopInvoke<void>('orb_save_position'),
+  orbAction: (action: string) => desktopInvoke<void>('orb_action', { action }),
+  dragFiles: (paths: string[]) => desktopInvoke<void>('drag_files', { paths }),
+  installUpdate: (jobId: string) => desktopInvoke<void>('install_update', { jobId }),
   files: (multiple = true, filters?: FileFilter[]) => desktopInvoke<string[]>('pick_files', { multiple, filters }),
   directory: () => desktopInvoke<string | null>('pick_directory'),
   save: (defaultName: string, filters?: FileFilter[]) => desktopInvoke<string | null>('pick_save', { defaultName, filters }),

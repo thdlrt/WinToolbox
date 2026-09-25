@@ -95,6 +95,16 @@ class App:
         self._emit({"type": type, **fields})
 
     def after_restore(self):
+        if hasattr(self, "filesync"):
+            self.filesync.init_tables()
+            self.filesync.due.clear()
+            self.filesync.pending.clear()
+            # Restored rules may refer to a different device. Require deliberate re-enabling.
+            for rule in self.filesync.rules():
+                rule['auto'] = False
+                self.filesync.put(rule)
+        if hasattr(self, "memory_after_restore"):
+            self.memory_after_restore()
         self.settings.reload()
         self.reset_local_llm()
 
@@ -115,8 +125,18 @@ class App:
         if holder and holder.get("session") and not holder["session"].stop_event.is_set():
             raise RuntimeError("请先停止实时会话后再恢复备份")
         self.local_llm.close()
+        if hasattr(self, "memory_before_restore"):
+            self.memory_before_restore()
 
     def close(self):
+        if hasattr(self, "memory_cleaner_close"):
+            self.memory_cleaner_close()
+        if hasattr(self, "filesync"):
+            self.filesync.close()
+        if hasattr(self, "memory_stop"):
+            self.memory_stop()
+        if hasattr(self, "gpu_guard_close"):
+            self.gpu_guard_close()
         if hasattr(self, "fnconnect_close"):
             self.fnconnect_close()
         holder = getattr(self, "live_holder", None)
@@ -128,10 +148,16 @@ class App:
             except TypeError:
                 self.live.stop()
         self.jobs.close()
+        if hasattr(self, "memory_close"):
+            self.memory_close()
         self.local_llm.close()
         self.providers.client.close()
 
     def prepare_exit(self):
+        if hasattr(self, "filesync"):
+            self.filesync.close()
+        if hasattr(self, "gpu_guard_close"):
+            self.gpu_guard_close()
         if hasattr(self, "fnconnect_close"):
             self.fnconnect_close()
         holder = getattr(self, "live_holder", None)
