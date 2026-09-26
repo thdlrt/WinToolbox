@@ -1,7 +1,7 @@
 import { createContext, useContext } from 'react';
 import type { Job, Settings } from './api';
 
-export type Page = 'home' | 'orb-settings' | 'ram' | 'memory' | 'media' | 'live' | 'captions' | 'practice' | 'phonetics' | 'expenses' | 'shizuku' | 'fnconnect' | 'gpu' | 'codex' | 'files' | 'filesync' | 'relay' | 'plugins' | 'settings';
+export type Page = 'home' | 'orb-settings' | 'ram' | 'memory' | 'media' | 'live' | 'captions' | 'practice' | 'phonetics' | 'expenses' | 'network' | 'shizuku' | 'fnconnect' | 'gpu' | 'codex' | 'files' | 'filesync' | 'relay' | 'plugins' | 'settings';
 export interface AppInfo { name: string; version: string; data_dir: string; ffmpeg?: string | boolean; platform?: string }
 export interface AppContextValue {
   page: Page; navigate: (page: Page) => void; connected: boolean; info?: AppInfo;

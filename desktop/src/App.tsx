@@ -21,6 +21,7 @@ import CaptionsPage, { CaptionOverlay } from './pages/Captions';
 import PracticePage from './pages/Practice';
 import PhoneticsPage from './pages/Phonetics';
 import ExpensesPage from './pages/Expenses';
+import NetworkPage from './pages/Network';
 import ShizukuPage from './pages/Shizuku';
 import FnConnectPage from './pages/FnConnect';
 import GpuGuardPage from './pages/GpuGuard';
@@ -37,6 +38,7 @@ const nav: { id: Page; name: string; icon: typeof House }[] = [
   { id: 'captions', name: '实时字幕', icon: Captions },
   { id: 'practice', name: '口语练习', icon: Speech },
   { id: 'expenses', name: '记账', icon: ReceiptText },
+  { id: 'network', name: '网络诊断', icon: Radio },
   { id: 'shizuku', name: 'Shizuku', icon: Smartphone },
   { id: 'fnconnect', name: 'FN 远程访问', icon: Radio },
   { id: 'gpu', name: '独显省电守卫', icon: Settings2 },
@@ -166,7 +168,7 @@ export default function App() {
   const value = useMemo(() => ({ page, navigate, setBeforeNavigate, connected, info, settings, jobs, theme, setTheme, pinnedTools, togglePinnedTool, refresh, refreshJobs, refreshSettings, error, success, run, track }), [page, navigate, setBeforeNavigate, connected, info, settings, jobs, theme, setTheme, pinnedTools, togglePinnedTool, refresh, refreshJobs, refreshSettings, error, success, run, track]);
   const sidebarNav = nav.filter(item => item.id === 'home' || item.id === 'settings' || pinnedTools.includes(item.id));
   const activeNav = page === 'phonetics' ? { name: '音标教学' } : nav.find(item => item.id === page)!;
-  const pages = { 'orb-settings': <OrbSettingsPage />, ram: <SystemMemoryPage />, relay: <RelayPage />, filesync: <FileSyncPage />, home: <HomePage />, memory: <ProjectMemoryPage />, media: <MediaPage />, live: <LivePage />, captions: <CaptionsPage />, practice: <PracticePage />, phonetics: <PhoneticsPage />, expenses: <ExpensesPage />, shizuku: <ShizukuPage />, fnconnect: <FnConnectPage />, gpu: <GpuGuardPage />, codex: <CodexPage />, files: <FilesPage />, plugins: <PluginsPage />, settings: <SettingsPage /> };
+  const pages = { 'orb-settings': <OrbSettingsPage />, ram: <SystemMemoryPage />, relay: <RelayPage />, filesync: <FileSyncPage />, home: <HomePage />, memory: <ProjectMemoryPage />, media: <MediaPage />, live: <LivePage />, captions: <CaptionsPage />, practice: <PracticePage />, phonetics: <PhoneticsPage />, expenses: <ExpensesPage />, network: <NetworkPage />, shizuku: <ShizukuPage />, fnconnect: <FnConnectPage />, gpu: <GpuGuardPage />, codex: <CodexPage />, files: <FilesPage />, plugins: <PluginsPage />, settings: <SettingsPage /> };
 
   return <AppContext.Provider value={value}>
     {captions ? <CaptionOverlay /> : overlay ? <div className="overlay-shell"><LivePage overlay /></div> : <div className={cx('app-shell', collapsed && 'nav-collapsed')}>

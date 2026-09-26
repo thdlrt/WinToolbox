@@ -80,6 +80,7 @@ Copy-Item -LiteralPath "$taskRoot/docs/PROJECT-MEMORY.md" -Destination "$taskPor
 Copy-Item -LiteralPath "$taskRoot/docs/FILESYNC.md" -Destination "$taskPortable/docs/FILESYNC.md" -Force
 Copy-Item -LiteralPath "$taskRoot/docs/FILE-RELAY.md" -Destination "$taskPortable/docs/FILE-RELAY.md" -Force
 Copy-Item -LiteralPath "$taskRoot/docs/FLOATING-ORB.md" -Destination "$taskPortable/docs/FLOATING-ORB.md" -Force
+Copy-Item -LiteralPath "$taskRoot/docs/LEDGER.md" -Destination "$taskPortable/docs/LEDGER.md" -Force
 if ($PortableOnly) {
     Write-Output "免安装版已更新：$taskPortable/WinToolbox.exe"
     Write-Output '设置、模型和记录保留在相邻 data 目录。'
@@ -102,7 +103,7 @@ foreach ($taskPart in @('python','core','tools')) { robocopy "$taskStage/$taskPa
 Set-Content -LiteralPath "$taskReleasePortable/portable.flag" -Value 'WinToolbox portable data mode' -Encoding utf8
 Copy-Item -LiteralPath "$taskRoot/README.md" -Destination "$taskReleasePortable/使用说明.md" -Force
 New-Item -ItemType Directory -Path "$taskReleasePortable/docs" -Force | Out-Null
-foreach ($taskDoc in @('PROJECT-MEMORY.md','FILESYNC.md','FILE-RELAY.md','FLOATING-ORB.md',"RELEASE-$taskVersion.md")) {
+foreach ($taskDoc in @('PROJECT-MEMORY.md','FILESYNC.md','FILE-RELAY.md','FLOATING-ORB.md','LEDGER.md',"RELEASE-$taskVersion.md")) {
     Copy-Item -LiteralPath "$taskRoot/docs/$taskDoc" -Destination "$taskReleasePortable/docs/$taskDoc" -Force
 }
 $taskPortableZip = Join-Path $taskDist "WinToolbox-$taskVersion-portable.zip"

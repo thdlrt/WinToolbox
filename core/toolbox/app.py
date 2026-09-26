@@ -69,6 +69,8 @@ class App:
             register_live_handlers(self)
         from .document_runtime import register as register_document_runtime
         register_document_runtime(self)
+        if hasattr(self, "ledger_auto_sync"):
+            self.ledger_auto_sync()
 
     def register(self, name, handler):
         if name in self.handlers:
@@ -105,6 +107,8 @@ class App:
                 self.filesync.put(rule)
         if hasattr(self, "memory_after_restore"):
             self.memory_after_restore()
+        if hasattr(self, "ledger_after_restore"):
+            self.ledger_after_restore()
         self.settings.reload()
         self.reset_local_llm()
 
@@ -127,8 +131,12 @@ class App:
         self.local_llm.close()
         if hasattr(self, "memory_before_restore"):
             self.memory_before_restore()
+        if hasattr(self, "ledger_before_restore"):
+            self.ledger_before_restore()
 
     def close(self):
+        if hasattr(self, "ledger_close"):
+            self.ledger_close()
         if hasattr(self, "memory_cleaner_close"):
             self.memory_cleaner_close()
         if hasattr(self, "filesync"):
@@ -154,6 +162,8 @@ class App:
         self.providers.client.close()
 
     def prepare_exit(self):
+        if hasattr(self, "ledger_close"):
+            self.ledger_close()
         if hasattr(self, "filesync"):
             self.filesync.close()
         if hasattr(self, "gpu_guard_close"):

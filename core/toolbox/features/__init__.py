@@ -14,6 +14,9 @@ def register_all(app):
     for module in (codex, files, plugins, knowledge, backups, practice, webdav, expenses, phonetics, shizuku, fnconnect, gpu_guard, project_memory, general):
         module.register(app)
 
+    from . import network
+    network.register(app)
+
     from .. import project_memory_curation, project_memory_export, project_memory_principles
     project_memory_curation.register(app, app.project_memory)
     project_memory_export.register(app, app.project_memory)

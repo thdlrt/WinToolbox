@@ -15,6 +15,8 @@ from pathlib import Path, PurePosixPath
 
 from ..jobs import Cancelled
 from ..settings import atomic_json
+from ..ledger import Ledger, DEFAULT_PROJECT
+from ..ledger_service import register_service
 
 
 CURRENCIES = ('CNY', 'USD', 'EUR', 'HKD')
@@ -130,6 +132,64 @@ def register(app):
         no_links(directory, root)
         directory.mkdir(exist_ok=True)
     lock = threading.RLock()
+    ledger = Ledger(root)
+    app.ledger = ledger
+
+    def journal(item, previous=None):
+        fields = ('title', 'date', 'amount', 'amount_minor', 'currency', 'entry_type', 'status', 'category', 'notes', 'project_id', 'created_at')
+        before = previous or {}
+        changes = {key: item[key] for key in fields if key in item and item.get(key) != before.get(key)}
+        old_attachments = {value['id']: value for value in before.get('attachments', [])}
+        new_attachments = {value['id']: value for value in item.get('attachments', [])}
+        for aid, attached in new_attachments.items():
+            if old_attachments.get(aid) != attached:
+                path = root / attached['relative_path']
+                if path.is_file():
+                    ledger.put_blob(path.read_bytes(), attached['sha256'])
+                changes['attachment:' + aid] = attached
+        for aid in old_attachments.keys() - new_attachments.keys():
+            changes['attachment:' + aid] = None
+        if changes:
+            return ledger.patch('entry', item['id'], changes)
+        return ledger.get('entry', item['id'])
+
+    def materialize():
+        with lock:
+            for entity in ledger.list_entities('entry', include_deleted=True):
+                path = record_path(entity['id'])
+                if entity['deleted']:
+                    path.unlink(missing_ok=True)
+                    continue
+                item = {key: value for key, value in entity.items() if key not in ('heads', 'conflicts', 'deleted') and not key.startswith('attachment:')}
+                item['attachments'] = [value for key, value in entity.items() if key.startswith('attachment:') and value is not None]
+                item['attachments'].sort(key=lambda value: value['id'])
+                for attached in item['attachments']:
+                    target = owned_path(item['id'], attached)
+                    if not target.exists():
+                        try:
+                            body = ledger.get_blob(attached['sha256'])
+                        except FileNotFoundError:
+                            # A legacy backup can contain metadata for a missing
+                            # receipt. Preserve it; attachment opening reports it.
+                            continue
+                        if len(body) != attached['size']:
+                            raise ValueError('附件大小校验失败')
+                        target.parent.mkdir(parents=True, exist_ok=True)
+                        target.write_bytes(body)
+                if path.exists():
+                    previous = json.loads(path.read_text('utf-8'))
+                    keys = (set(previous) | set(item)) - {'revision', 'updated_at'}
+                    changed = any(previous.get(key) != item.get(key) for key in keys)
+                    item['revision'] = max(item['revision'], previous.get('revision', 0) + (1 if changed else 0))
+                atomic_json(path, item)
+
+    def apply_remote(operations):
+        # Download outside the gate, then publish operations and their visible rows
+        # together. A local edit cannot accidentally parent an unseen remote edit.
+        with getattr(app, 'data_lock', contextlib.nullcontext()), lock:
+            ledger.ingest(operations)
+            materialize()
+    ledger.apply_remote = apply_remote
 
     def record_path(item_id):
         path = records / (identifier(item_id) + '.json')
@@ -146,7 +206,7 @@ def register(app):
         try:
             normalized_amount, minor = money(item['amount'])
             entry_type = item.get('entry_type', 'expense')
-            if entry_type not in ENTRY_TYPES or entry_type == 'income' and minor <= 0:
+            if entry_type not in ENTRY_TYPES:
                 raise ValueError()
             if (not isinstance(item['amount_minor'], int) or isinstance(item['amount_minor'], bool) or item['amount_minor'] != minor
                     or item['currency'] not in CURRENCIES
@@ -157,6 +217,9 @@ def register(app):
             item['amount'] = normalized_amount
             item['entry_type'] = entry_type
             item['status'] = normalized_status(item['status'], entry_type)
+            item['project_id'] = item.get('project_id', DEFAULT_PROJECT)
+            if entry_type == 'income' and minor == 0:
+                item['validation_warning'] = '合并后的收入金额为零，请检查金额或收支类型'
         except (KeyError, ValueError, TypeError):
             raise ValueError('费用记录格式或金额已损坏，不能安全汇总') from None
         return item
@@ -176,7 +239,9 @@ def register(app):
 
     def get(params):
         with lock:
-            return copy.deepcopy(read(params.get('id')))
+            item = copy.deepcopy(read(params.get('id')))
+            entity = ledger.get('entry', item['id'])
+            return {**item, 'sync_heads': entity['heads'] if entity else [], 'sync_conflicts': entity['conflicts'] if entity else {}}
 
     def save(params):
         with lock:
@@ -184,6 +249,7 @@ def register(app):
             if previous:
                 expect(previous, params)
             item = copy.deepcopy(previous) if previous else {'id': uuid.uuid4().hex, 'revision': 0, 'created_at': time.time(), 'attachments': []}
+            item.pop('validation_warning', None)
             item['title'] = text_field(params.get('title', item.get('title')), '标题', 200)
             item['date'] = iso_date(params.get('date', item.get('date')))
             item['amount'], item['amount_minor'] = money(params.get('amount', item.get('amount')))
@@ -203,15 +269,34 @@ def register(app):
             item['status'] = normalized_status(status, entry_type)
             item['category'] = text_field(params.get('category', item.get('category', '转账收入' if entry_type == 'income' else 'AI订阅')), '分类', 80)
             item['notes'] = text_field(params.get('notes', item.get('notes', '')), '备注', 5000, empty=True)
-            if previous and all(item[key] == previous.get(key) for key in ('title', 'date', 'amount', 'currency', 'entry_type', 'status', 'category', 'notes')):
+            item['project_id'] = identifier(params.get('project_id', item.get('project_id', DEFAULT_PROJECT)))
+            project = ledger.get('project', item['project_id'])
+            if not project or project['deleted'] or project.get('archived') and (not previous or previous['project_id'] != item['project_id']):
+                raise ValueError('请选择有效且未归档的项目')
+            if previous and all(item[key] == previous.get(key) for key in ('title', 'date', 'amount', 'currency', 'entry_type', 'status', 'category', 'notes', 'project_id')):
                 return copy.deepcopy(previous)
             item.update(revision=item['revision'] + 1, updated_at=time.time())
+            journal(item, previous)
             atomic_json(record_path(item['id']), item)
             app.emit('expenses.changed', id=item['id'], month=item['date'][:7])
             return item
 
     def listing(params):
-        start, end = period(params)
+        start_date = end_date = None
+        if 'start_date' in params or 'end_date' in params:
+            if any(key in params for key in ('month', 'start_month', 'end_month')):
+                raise ValueError('日期和月份区间不能同时使用')
+            start_date, end_date = iso_date(params.get('start_date')), iso_date(params.get('end_date'))
+            if start_date > end_date:
+                raise ValueError('开始日期不能晚于结束日期')
+            start, end = start_date[:7], end_date[:7]
+        else:
+            start, end = period(params)
+        project_id = params.get('project_id', DEFAULT_PROJECT)
+        project = None if project_id == 'all' else ledger.get('project', identifier(project_id))
+        if project_id != 'all' and (not project or project['deleted']):
+            raise ValueError('记账项目不存在')
+        settlement_mode = project.get('settlement_mode', 'general') if project else 'general'
         filters = {}
         for field in ('query', 'entry_type', 'status', 'category', 'currency'):
             value = params.get(field)
@@ -241,7 +326,8 @@ def register(app):
                     item = read(path.stem)
                 except (OSError, ValueError):
                     raise ValueError('费用记录损坏，无法安全汇总：' + path.name) from None
-                if start <= item['date'][:7] <= end:
+                if (start <= item['date'][:7] <= end and (not start_date or start_date <= item['date'] <= end_date)
+                        and (project_id == 'all' or item['project_id'] == project_id)):
                     items.append(item)
         items.sort(key=lambda item: (item['date'], item['created_at']), reverse=True)
         totals = {}
@@ -264,6 +350,9 @@ def register(app):
             # Split the whole period's unreimbursed cost once, rounding half a cent up.
             group['share_due'] = (group['expense_total'] - group['reimbursed'] + 1) // 2
             group['settlement_remaining'] = group['share_due'] - group['transfer_income']
+            if settlement_mode != 'half':
+                group['share_due'] = 0
+                group['settlement_remaining'] = 0
             group.update(total=group['expense_total'], personal=group['non_reimbursable'], waiting=group['pending'],
                          unsubmitted=group['pending'], submitted=0)
             counts = ('count', 'expense_count', 'income_count')
@@ -281,6 +370,7 @@ def register(app):
                     return False
             return True
         return {'month': start if start == end else None, 'start_month': start, 'end_month': end,
+                'start_date': start_date, 'end_date': end_date, 'project_id': project_id, 'settlement_mode': settlement_mode,
                 'summary_scope': 'period', 'items': [item for item in items if matches(item)],
                 'summary': summary, 'categories': categories}
 
@@ -333,10 +423,13 @@ def register(app):
             destination = archive / (uuid.uuid4().hex + '.json')
             atomic_json(destination, {'deleted_at': time.time(), 'kind': 'attachment' if attachment else 'item', 'parent_id': item['id'] if attachment else None, 'record': value})
             if attachment:
+                previous = copy.deepcopy(item)
                 item['attachments'] = [entry for entry in item['attachments'] if entry['id'] != value['id']]
                 item.update(revision=item['revision'] + 1, updated_at=time.time())
+                journal(item, previous)
                 atomic_json(record_path(item['id']), item)
             else:
+                ledger.patch('entry', item['id'], {}, deleted=True)
                 record_path(item['id']).unlink()
             app.emit('expenses.changed', id=item['id'], month=item['date'][:7])
             return {'ok': True, 'id': item['id'], 'archive_path': str(destination),
@@ -418,8 +511,10 @@ def register(app):
                                     job.check_cancelled()
                                     output.write(block)
                     job.check_cancelled()
+                    previous = copy.deepcopy(current)
                     current['attachments'].extend(staged_values)
                     current.update(revision=current['revision'] + 1, updated_at=time.time())
+                    journal(current, previous)
                     atomic_json(record_path(current['id']), current)
                     if hasattr(job, 'mark_committed'):
                         job.mark_committed()
@@ -449,3 +544,14 @@ def register(app):
         app.register('expenses.' + name, handler)
     app.register('expenses.delete', remove)
     app.register('expenses.attachment.delete', lambda p: remove(p, attachment=True))
+    # One-time migration preserves IDs, amounts, receipts and original AI settlement.
+    def migrate():
+        for path in records.glob('*.json'):
+            if ledger.get('entry', path.stem) is None:
+                item = read(path.stem)
+                journal(item)
+                atomic_json(path, item)
+    app.ledger_migrate = migrate
+    migrate()
+    materialize()  # Recover durable edits after interruption before cache publication.
+    register_service(app, ledger, materialize, listing, text_field, lock)
