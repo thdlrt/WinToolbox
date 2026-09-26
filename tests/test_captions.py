@@ -213,13 +213,18 @@ def test_caption_storage_and_translation_queue_are_bounded(app):
     app.providers.chat = chat
     app.call("captions.start")
     s = app.live_holder["session"]
-    for n in range(45):
-        s.segment(str(n), str(n), True, "system", n, n + 1)
+    # Ensure one worker is blocked before flooding/evicting its input. Otherwise
+    # a busy runner may evict every queued item before any worker starts.
+    s.segment("0", "0", True, "system", 0, 1)
     assert entered.wait(10)
-    assert len(s.segments) == 30
-    assert s.translate_pool._work_queue.qsize() <= 2
-    assert app.call("captions.state")["segments"][0]["seq"] == 16
-    release.set()
+    try:
+        for n in range(1, 45):
+            s.segment(str(n), str(n), True, "system", n, n + 1)
+        assert len(s.segments) == 30
+        assert s.translate_pool._work_queue.qsize() <= 2
+        assert app.call("captions.state")["segments"][0]["seq"] == 16
+    finally:
+        release.set()
     s.translate_pool.shutdown(wait=True)
     assert len(s.segments) == 30  # Late translations never reinsert evicted segments.
 
