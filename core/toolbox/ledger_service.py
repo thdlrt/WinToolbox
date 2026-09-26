@@ -14,6 +14,7 @@ from xml.sax.saxutils import escape
 from .ledger import DEFAULT_PROJECT, ID
 from .ledger_sync import LedgerRemote
 from .settings import atomic_json
+from .webdav_layout import shared_config, service_paths, ledger_sources, ledger_source_result, migration_config
 
 
 def write_xlsx(path, rows):
@@ -52,9 +53,7 @@ def register_service(app, ledger, materialize, listing, text_field, expense_lock
     paused = False
 
     def config():
-        path = app.data_dir / 'webdav.json'
-        saved = json.loads(path.read_text('utf-8')) if path.exists() else {}
-        return {'remote_path': 'WinToolbox', **saved}
+        return shared_config(app.data_dir)
 
     def configured():
         value = config()
@@ -63,11 +62,13 @@ def register_service(app, ledger, materialize, listing, text_field, expense_lock
     def status(_=None):
         with state_lock:
             count = len(ledger.export_operations())
+            pending_sources = [value for value in ledger_sources(app.data_dir).values() if value.get('pending')]
             return {'configured': configured(), 'syncing': state.get('syncing', False),
                     'pending': max(0, count - state.get('synced_operations', 0)),
                     'last_sync': state.get('last_sync'), 'error': state.get('error'),
                     'conflicts': len(ledger.conflicts()), 'incomplete': ledger.incomplete(),
-                    'remote_path': config()['remote_path'] + '/ledger-v1'}
+                    'migration_pending': len(pending_sources), 'migration_error': '\n'.join(value['error'] for value in pending_sources if value.get('error')) or None,
+                    'remote_path': service_paths(config())['ledger']}
 
     def projects(_):
         return {'items': ledger.list_entities('project')}
@@ -122,13 +123,31 @@ def register_service(app, ledger, materialize, listing, text_field, expense_lock
                 return {'skipped': True, 'reason': 'maintenance'}
             if not configured():
                 raise ValueError('请先在设置中配置统一 WebDAV 连接')
+            migration_errors = []
+            for key, source in ledger_sources(app.data_dir).items():
+                if not source.get('pending'):
+                    continue
+                old_remote = None
+                try:
+                    job.check_cancelled()
+                    old_remote = LedgerRemote(migration_config(source['config'], config()))
+                    old_remote.sync(ledger, job, read_only=True)
+                    ledger_source_result(app.data_dir, key)
+                except Exception as exc:
+                    error = '旧 WebDAV 记账数据尚未合并，将继续重试：' + str(exc)
+                    migration_errors.append(error)
+                    ledger_source_result(app.data_dir, key, error)
+                finally:
+                    if old_remote:
+                        old_remote.close()
             remote = LedgerRemote(config())
             # No network I/O holds the app data lock; local writing remains available.
             result = remote.sync(ledger, job)
             with getattr(app, 'data_lock', contextlib.nullcontext()), expense_lock:
                 materialize()
             with state_lock:
-                state.update(last_sync=time.time(), synced_operations=result['synced_operations'], error=None)
+                state.update(last_sync=time.time(), synced_operations=result['synced_operations'], error='\n'.join(migration_errors) or None)
+            result['migration_pending'] = len(migration_errors)
             app.emit('expenses.changed', synced=True)
             return result
         except Exception as exc:

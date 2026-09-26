@@ -2,6 +2,7 @@ import { strict as assert } from 'node:assert';
 import { expenseDateValid, expenseDraft, expenseDirty, expensePeriodValid, expenseQueryParams, emptyExpenseFilters, legacyExpenseProject, newExpenseInPeriod, newExpense } from './expensesState.ts';
 import { networkParams, networkValidation, newNetworkDraft, networkDraft } from './networkState.ts';
 import { belongsToTool } from './toolJobsState.ts';
+import { ledgerMigrationMessage } from './ledgerSyncState.ts';
 
 const period = { start_month: '2026-01', end_month: '2026-01', start_date: '2026-09-12', end_date: '2026-09-20' };
 assert.equal(expensePeriodValid(period), true, 'exact dates override legacy month fields');
@@ -27,4 +28,8 @@ assert.equal(networkDraft({ id: 'fixture', name: 'Local', target: 'localhost', p
 assert.equal(belongsToTool({ tool: 'expenses.export' }, 'expenses'), true);
 assert.equal(belongsToTool({ tool: 'network.run' }, 'network'), true);
 assert.equal(belongsToTool({ tool: 'media' }, 'network'), false);
+assert.notEqual(ledgerMigrationMessage({ last_sync: 1900000000, migration_pending: 1, migration_error: null }), '', 'successful current-root sync cannot hide an unfinished old-root import');
+assert.notEqual(ledgerMigrationMessage({ migration_pending: 0, migration_error: 'old server unavailable' }), '', 'migration errors remain visible even if pending count is absent or zero');
+assert.equal(ledgerMigrationMessage({ migration_pending: 0, migration_error: null }), '');
+assert.equal(ledgerMigrationMessage(undefined), '');
 console.log('Ledger/network: exact-date boundaries, project edits, legacy migration, safe targets and limits passed.');

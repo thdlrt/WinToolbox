@@ -3,7 +3,6 @@ import contextlib
 import copy
 import datetime
 import email.utils
-import ipaddress
 import json
 import re
 import tempfile
@@ -16,6 +15,7 @@ from urllib.parse import quote, unquote, urljoin, urlsplit, urlunsplit
 import httpx
 
 from ..settings import atomic_json, protect
+from ..webdav_layout import ensure_service_directory, service_config, service_paths, promote_legacy_connection, remember_ledger_source
 
 
 DEFAULTS = {'url': '', 'remote_path': 'WinToolbox', 'username': '', 'include_media': True,
@@ -30,10 +30,7 @@ def normalized_url(value):
         parsed = urlsplit(str(value or '').strip())
         host = parsed.hostname or ''
         port = parsed.port
-        loopback = host.lower() == 'localhost'
-        with contextlib.suppress(ValueError):
-            loopback = loopback or ipaddress.ip_address(host).is_loopback
-        if (parsed.scheme not in ('https', 'http') or not host or parsed.scheme == 'http' and not loopback
+        if (parsed.scheme not in ('https', 'http') or not host
                 or parsed.username is not None or parsed.password is not None or parsed.query or parsed.fragment):
             raise ValueError()
         parts = unquote(parsed.path).split('/')
@@ -45,7 +42,7 @@ def normalized_url(value):
         path = '/'.join(quote(part, safe='') for part in parts).rstrip('/') + '/'
         return urlunsplit((parsed.scheme, netloc, path, '', ''))
     except (ValueError, TypeError) as exc:
-        raise ValueError('请填写 HTTPS WebDAV 地址，不要在地址中包含账号、密码或查询参数') from exc
+        raise ValueError('请填写 HTTP/HTTPS WebDAV 地址，不要在地址中包含账号、密码或查询参数') from exc
 
 
 def normalized_path(value):
@@ -110,6 +107,8 @@ class Remote:
             raise ValueError('WebDAV 返回了无效目录信息') from exc
 
     def ensure_directory(self):
+        if ensure_service_directory(self):
+            return
         result = self.xml(self.directory, 0)
         if result is not None:
             if not result.findall('.//{DAV:}collection'):
@@ -175,6 +174,9 @@ class Remote:
             self.checked(response, (201, 204))
             job.check_cancelled()
             response = self.request('MOVE', temporary, headers={'Destination': destination, 'Overwrite': 'F'})
+            if response.status_code == 502:
+                job.check_cancelled()
+                response = self.request('MOVE', temporary, headers={'Destination': urlsplit(destination).path, 'Overwrite': 'F'})
             self.checked(response, (201, 204))
             if hasattr(job, 'mark_committed'):
                 job.mark_committed()
@@ -227,6 +229,7 @@ class StageJob:
 
 
 def register(app):
+    promote_legacy_connection(app.data_dir)
     path = app.data_dir / 'webdav.json'
     lock = threading.RLock()
     sync_lock = threading.Lock()
@@ -240,6 +243,7 @@ def register(app):
         with lock:
             value = config()
             return {**{key: value[key] for key in DEFAULTS}, 'has_password': bool(value.get('password_dpapi')),
+                    'service_paths': service_paths(value),
                     'configured': bool(value['url'] and value['username'] and value.get('password_dpapi'))}
 
     def save(params):
@@ -261,7 +265,15 @@ def register(app):
                 value.pop('password_dpapi', None)
             if password:
                 value['password_dpapi'] = protect(password)
+            if previous.get('url') and previous.get('username') and previous.get('password_dpapi') and any(value.get(key) != previous.get(key) for key in ('url', 'username', 'remote_path')):
+                if hasattr(app, 'relay'):
+                    app.relay.remember_source(service_config(previous, 'relay'))
+                remember_ledger_source(app.data_dir, previous, value)
             atomic_json(path, value)
+            if hasattr(app, 'ledger_auto_sync'):
+                app.ledger_auto_sync()
+            if hasattr(app, 'memory_auto_sync_wake'):
+                app.memory_auto_sync_wake()
             return get()
 
     def require_config():
@@ -287,25 +299,14 @@ def register(app):
             return {'ok': True, 'message': 'WebDAV 连接成功', 'remote_path': client.config['remote_path']}
 
     def listing(_):
-        with remote() as client:
-            return {'snapshots': client.listing(), 'remote_path': client.config['remote_path']}
-
-    @contextlib.contextmanager
-    def frozen(job):
-        gate = getattr(app, 'data_lock', contextlib.nullcontext())
-        with gate:
-            with app.jobs.lock:
-                if any(id != job.id for id in app.jobs.active):
-                    raise ValueError('请等待或取消其他任务后再同步快照')
-                holder = getattr(app, 'live_holder', None)
-                if holder and holder.get('session') and not holder['session'].stop_event.is_set():
-                    raise ValueError('请先停止实时会话或字幕后再同步快照')
-                previous = app.maintenance
-                app.maintenance = True
-            try:
-                yield
-            finally:
-                app.maintenance = previous
+        value = require_config()
+        with remote(service_config(value, 'config_backups')) as client:
+            client.ensure_directory()
+            snapshots = [{**row, 'scope': 'config', 'location': 'config'} for row in client.listing()]
+        with remote(value) as client:
+            snapshots.extend({**row, 'scope': 'legacy_full', 'location': 'legacy_root'} for row in client.listing())
+        return {'snapshots': sorted(snapshots, key=lambda row: row['name'], reverse=True),
+                'remote_path': service_config(value, 'config_backups')['remote_path']}
 
     def secret_for(job):
         with lock:
@@ -315,6 +316,7 @@ def register(app):
             return copy.deepcopy(value)
 
     def upload_job(job):
+        from ..config_backup import export_config
         saved = secret_for(job)
         if not sync_lock.acquire(blocking=False):
             raise ValueError('已有 WebDAV 同步任务正在运行')
@@ -323,43 +325,31 @@ def register(app):
             name = 'wintoolbox-' + stamp + '-' + uuid.uuid4().hex + ('.enc' if saved['password'] else '') + '.wtbak'
             with tempfile.TemporaryDirectory(prefix='.webdav-upload-', dir=app.data_dir.parent) as directory:
                 source = Path(directory) / name
-                with frozen(job):
-                    exported = app.backup_internal('export', StageJob(job, 0, .45), {'path': str(source), **saved['options']}, password=saved['password'])
+                with getattr(app, 'data_lock', contextlib.nullcontext()), app.settings.lock:
+                    exported = export_config(app, source, StageJob(job, 0, .45), password=saved['password'], include_secrets=saved['options']['include_secrets'])
                 with remote(saved['config']) as client:
                     size = client.upload(source, name, job)
             return {'name': name, 'size': size, 'encrypted': bool(saved['password']), 'remote_path': saved['config']['remote_path'],
+                    'scope': 'config',
                     'files': exported['files'], 'warnings': exported['warnings']}
         finally:
             sync_lock.release()
 
     def restore_job(job):
+        from ..config_backup import import_config
         saved = secret_for(job)
         name = snapshot_name(job.params.get('name'))
         if not sync_lock.acquire(blocking=False):
             raise ValueError('已有 WebDAV 同步任务正在运行')
-        recovery = None
         try:
             with tempfile.TemporaryDirectory(prefix='.webdav-download-', dir=app.data_dir.parent) as directory:
                 source = Path(directory) / name
                 with remote(saved['config']) as client:
                     client.download(name, source, job)
-                def snapshot_before_restore(manifest):
-                    nonlocal recovery
-                    directory = app.data_dir.parent / (app.data_dir.name + '-recovery')
-                    directory.mkdir(exist_ok=True)
-                    recovery = directory / ('before-webdav-' + uuid.uuid4().hex + '.wtbak')
-                    # Back up exactly the optional model/secret scope that this
-                    # restore may replace; local media is always recoverable.
-                    app.backup_internal('export', StageJob(job, 60, .25, artifacts=True), {
-                        'path': str(recovery), 'include_media': True,
-                        'include_models': bool(manifest.get('include_models')),
-                        'include_secrets': bool(manifest.get('include_secrets')),
-                    }, password=saved['password'])
-                with frozen(job):
-                    result = app.backup_internal('import', StageJob(job, 35, .4), {'path': str(source)},
-                                                 password=saved['password'], before_commit=snapshot_before_restore)
-            job.progress(100, 'WebDAV 快照已恢复')
-            return {**result, 'recovery_path': str(recovery), 'remote_name': name}
+                with getattr(app, 'data_lock', contextlib.nullcontext()), app.settings.lock:
+                    result = import_config(app, source, StageJob(job, 35, .6), password=saved['password'])
+            job.progress(100, 'WebDAV 配置已恢复，记账和文件数据保持完整')
+            return {**result, 'remote_name': name}
         finally:
             sync_lock.release()
 
@@ -368,16 +358,21 @@ def register(app):
         password = params.get('backup_password', '')
         if not isinstance(password, str) or password and len(password) < 8:
             raise ValueError('备份密码至少需要 8 个字符')
-        options = {flag: params.get(flag, value[flag]) for flag in ('include_media', 'include_models', 'include_secrets')}
+        options = {'include_secrets': params.get('include_secrets', value['include_secrets'])}
         if any(not isinstance(flag, bool) for flag in options.values()):
             raise ValueError('同步范围选项无效')
         if not restore and options['include_secrets'] and len(password) < 8:
             raise ValueError('包含 API 密钥时，请填写至少 8 位备份密码')
         name = snapshot_name(params.get('name')) if restore else None
+        location = params.get('location', 'config')
+        if location not in ('config', 'legacy_root'):
+            raise ValueError('配置备份位置无效')
+        if not restore or location == 'config':
+            value = service_config(value, 'config_backups')
         token = uuid.uuid4().hex
         with lock:
             credentials[token] = {'config': value, 'password': password, 'options': options}
-        safe = {'credential_token': token, **({'name': name} if restore else options)}
+        safe = {'credential_token': token, **({'name': name, 'location': location} if restore else options)}
         try:
             return app.jobs.submit('webdav.restore' if restore else 'webdav.upload', safe)
         except BaseException:

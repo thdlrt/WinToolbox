@@ -1,4 +1,13 @@
 .webdav-sync{min-width:0}
+.webdav-service{padding:15px 0;border-bottom:1px solid var(--border)}
+.webdav-service-heading,.webdav-service-actions{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.webdav-service-heading{justify-content:space-between;margin-bottom:8px}
+.webdav-service-heading h3{font-size:13px}
+.webdav-service .ledger-sync{padding:0}
+.webdav-service-actions>.button{margin-left:auto}
+.webdav-service-paths{font-size:12px;margin-top:18px;color:var(--muted)}
+.webdav-service-paths dl{display:grid;grid-template-columns:140px minmax(0,1fr);gap:8px;margin-top:12px}
+.webdav-service-paths dd{margin:0;overflow-wrap:anywhere}
 .webdav-connection-actions{display:flex;align-items:center;gap:9px;margin-top:14px}
 .webdav-connection-actions>.small-note{flex:1}
 .webdav-options{gap:16px 26px;margin:0 0 18px}

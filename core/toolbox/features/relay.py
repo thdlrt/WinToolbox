@@ -19,6 +19,7 @@ import httpx
 from ..settings import atomic_json, protect
 from .filesync import safe_path, signature
 from .webdav import Remote as SnapshotRemote
+from ..webdav_layout import shared_config, service_config, ensure_service_directory, migration_config
 
 PROPERTIES = b'<?xml version="1.0"?><d:propfind xmlns:d="DAV:"><d:prop><d:resourcetype/><d:getcontentlength/><d:getlastmodified/><d:getetag/></d:prop></d:propfind>'
 MAX_FILES = 20000
@@ -143,6 +144,9 @@ class Remote(SnapshotRemote):
         return sorted((row for key, row in rows.items() if key != path), key=lambda r: (not r['directory'], -(r['modified'] or 0), r['name'].casefold()))
 
     def ensure(self, path='', job=None):
+        if not path and self.config.get('shared_root'):
+            ensure_service_directory(self)
+            return
         existing = self.stat(path, job)
         if existing:
             if not existing['directory']: raise ValueError('目标位置已有同名文件')
@@ -302,6 +306,7 @@ class Relay:
         self.path = app.data_dir / 'relay-connection.json'
         self.lock = threading.RLock()
         self.write_lock = threading.Lock()
+        self.migration_lock = threading.Lock()
         self.plans = {}
         self.launch = None
 
@@ -329,16 +334,20 @@ class Relay:
     def config(self):
         with self.lock:
             data = json.loads(self.path.read_text('utf-8')) if self.path.exists() else {}
-            shared_path = self.app.data_dir / 'webdav.json'
-            shared = json.loads(shared_path.read_text('utf-8')) if shared_path.exists() else {}
+            shared = shared_config(self.app.data_dir)
+            if data.get('layout_version') != 2:
+                previous = dict(data)
+                legacy = None
+                if data:
+                    use_shared = data.get('use_shared', bool(shared.get('url')) or not data.get('url'))
+                    legacy = {**previous, **({key: shared.get(key, '') for key in ('url', 'username', 'password_dpapi')} if use_shared else {})}
+                    legacy['remote_path'] = previous.get('remote_path', '文件中转站')
+                data = {'layout_version': 2, 'download_dir': previous.get('download_dir', str(Path.home() / 'Downloads' / '文件中转站')),
+                        'legacy_source': legacy, 'migration': {'pending': bool(legacy), 'warning': None}}
+                atomic_json(self.path, data)
         shared_ready = bool(shared.get('url') and shared.get('username') and shared.get('password_dpapi'))
-        use_shared = data.get('use_shared', shared_ready or not data.get('url'))
-        value = {'url': '', 'username': '', 'remote_path': '文件中转站',
-                 'download_dir': str(Path.home() / 'Downloads' / '文件中转站'), **data,
-                 'use_shared': use_shared, 'shared_configured': shared_ready}
-        if use_shared:
-            for key in ('url', 'username', 'password_dpapi'):
-                value[key] = shared.get(key, '')
+        value = {**service_config(shared, 'relay'), 'download_dir': data.get('download_dir'),
+                 'use_shared': True, 'shared_configured': shared_ready, 'migration': data.get('migration', {})}
         # A queued operation must never follow a later global connection change.
         value['revision'] = hashlib.sha256(json.dumps([value.get(k) for k in
             ('url', 'username', 'password_dpapi', 'remote_path', 'download_dir', 'revision')], ensure_ascii=False).encode()).hexdigest()
@@ -355,25 +364,10 @@ class Relay:
             raise ValueError("上传或清理正在进行，请等待完成后修改连接")
         try:
             with self.lock:
-                old = self.config()
-                value = {**old, **{k: params[k] for k in ('url', 'username', 'remote_path', 'download_dir', 'use_shared') if k in params}}
-                if 'use_shared' not in params and any(k in params for k in ('url', 'username', 'password')):
-                    value['use_shared'] = False  # Existing API clients explicitly saving their own connection.
-                if not isinstance(value['use_shared'], bool): raise ValueError('连接来源无效')
-                value['remote_path'] = relative(value['remote_path'].strip('/'), empty=False)
-                value['download_dir'] = str(safe_path(value['download_dir']))
-                if value['use_shared']:
-                    for key in ('url', 'username', 'password_dpapi'): value.pop(key, None)
-                else:
-                    value['url'] = endpoint(value['url'])
-                    if not isinstance(value['username'], str) or not value['username'].strip() or any(ord(c) < 32 for c in value['username']):
-                        raise ValueError('请填写有效用户名')
-                    password = params.get('password', '')
-                    if not isinstance(password, str): raise ValueError('密码应为文本')
-                    if value['url'] != old['url'] or value['username'] != old['username'] or params.get('clear_password'):
-                        value.pop('password_dpapi', None)
-                    if password: value['password_dpapi'] = protect(password)
-                value.pop('shared_configured', None)
+                self.config()
+                value = json.loads(self.path.read_text('utf-8'))
+                if 'download_dir' in params:
+                    value['download_dir'] = str(safe_path(params['download_dir']))
                 value['revision'] = uuid.uuid4().hex
                 atomic_json(self.path, value)
                 self.plans.clear()
@@ -392,11 +386,139 @@ class Relay:
     @contextlib.contextmanager
     def remote(self, job):
         value = self.config()
-        if not value['url'] or not value.get('password_dpapi'): raise ValueError('请先在设置中配置 WebDAV 连接，再设置中转目录')
+        if not value['url'] or not value.get('password_dpapi'): raise ValueError('请先在设置中配置统一 WebDAV 连接')
         if value.get('revision') != job.params.get('revision'): raise ValueError('连接配置已变化，请重新操作')
         remote = Remote(value)
-        try: yield remote
+        try:
+            remote.ensure('', job)
+            self.migrate(remote, job)
+            yield remote
         finally: remote.close()
+
+    def remember_source(self, value):
+        with self.lock:
+            self.config()
+            data = json.loads(self.path.read_text('utf-8'))
+            sources = data.get('legacy_sources', [])
+            if not any(all(source.get(key) == value.get(key) for key in ('url', 'username', 'remote_path')) for source in sources):
+                sources.append({key: value[key] for key in ('url', 'username', 'password_dpapi', 'remote_path')})
+            # Revisiting a root makes its inbox writable again. Leaving it later
+            # must rescan new files even if this source/destination copied before.
+            fingerprint = hashlib.sha256((endpoint(value['url']) + '\n' + value['remote_path']).encode()).hexdigest()[:12]
+            data['migration_sources'] = {key: state for key, state in data.get('migration_sources', {}).items()
+                                         if not key.startswith(fingerprint + ':')}
+            data['legacy_sources'] = sources
+            data['migration'] = {**data.get('migration', {}), 'pending': True}
+            atomic_json(self.path, data)
+
+    def migrate(self, destination, job):
+        with self.lock:
+            data = json.loads(self.path.read_text('utf-8'))
+        sources = ([data['legacy_source']] if data.get('legacy_source') else []) + data.get('legacy_sources', [])
+        states = [self._migrate_source(destination, job, source) for source in sources]
+        if states:
+            status = {'pending': any(state['pending'] for state in states),
+                      'warning': '\n'.join(state['warning'] for state in states if state.get('warning')) or None,
+                      'legacy_path': ', '.join(state.get('legacy_path', '') for state in states),
+                      'copied': sum(state.get('copied', 0) for state in states)}
+            with self.lock:
+                data = json.loads(self.path.read_text('utf-8'))
+                data['migration'] = status
+                atomic_json(self.path, data)
+
+    def _migrate_source(self, destination, job, source_config):
+        """Copy the former inbox once, retaining sources and all collision versions."""
+        with self.migration_lock:
+            with self.lock:
+                data = json.loads(self.path.read_text('utf-8'))
+            source_config = {**source_config, **{key: source_config.get(key) or destination.config.get(key, '') for key in ('url', 'username', 'password_dpapi')}}
+            source_config = migration_config(source_config, destination.config)
+            fingerprint = hashlib.sha256((endpoint(source_config.get('url', '')) + '\n' + source_config['remote_path']).encode()).hexdigest()[:12]
+            target_key = hashlib.sha256((destination.directory + destination.config['username']).encode()).hexdigest()
+            checkpoint = fingerprint + ':' + target_key
+            prior = data.get('migration_sources', {}).get(checkpoint)
+            if prior and not prior.get('pending'):
+                return prior
+            status = {'pending': True, 'warning': None, 'legacy_path': source_config['remote_path'], 'destination': target_key, 'copied': 0}
+            source = None
+            try:
+                source = Remote(source_config)
+                if source.directory == destination.directory:
+                    status['pending'] = False
+                elif source.stat('', job) is None:
+                    status['pending'] = False
+                else:
+                    excluded = []
+                    shared_directory = destination.directory.removesuffix('file-relay/')
+                    for child in ('file-relay/', 'ledger-v1/', 'project-memory/', 'config-backups/'):
+                        owned = shared_directory + child
+                        if owned.startswith(source.directory):
+                            excluded.append(unquote(owned[len(source.directory):]).strip('/'))
+                    queue, rows, directories = [''], [], set()
+                    while queue:
+                        folder = queue.pop()
+                        for row in source.listing(folder, job):
+                            if any(row['path'] == prefix or row['path'].startswith(prefix + '/') for prefix in excluded):
+                                continue
+                            if row['directory']:
+                                directories.add(row['path'])
+                                queue.append(row['path'])
+                            else:
+                                rows.append(row)
+                        if len(rows) + len(directories) > MAX_FILES:
+                            raise ValueError('旧目录超过 20000 项，请分批迁移')
+                    directory_map = {'': ''}
+                    for folder in sorted(directories, key=lambda value: (value.count('/'), value)):
+                        parent, _, name = folder.rpartition('/')
+                        mapped_parent = directory_map[parent]
+                        target = mapped_parent + '/' + name if mapped_parent else name
+                        existing = destination.stat(target, job)
+                        if existing and not existing['directory']:
+                            target = 'legacy-' + fingerprint + '/' + folder
+                        destination.ensure(target, job)
+                        directory_map[folder] = target
+                    with tempfile.TemporaryDirectory(prefix='relay-migrate-') as directory:
+                        for row in rows:
+                            job.check_cancelled()
+                            for previous in Path(directory).iterdir():
+                                previous.unlink()
+                            local = Path(directory) / uuid.uuid4().hex
+                            digest = source.download_file(row, local, job)
+                            parent, _, name = row['path'].rpartition('/')
+                            mapped_parent = directory_map[parent]
+                            path = mapped_parent + '/' + name if mapped_parent else name
+                            existing = destination.stat(path, job)
+                            if existing:
+                                if not existing['directory'] and existing['size'] == row['size']:
+                                    check = Path(directory) / uuid.uuid4().hex
+                                    if destination.download_file(existing, check, job) == digest:
+                                        continue
+                                path = 'legacy-' + fingerprint + '/' + row['path']
+                                existing = destination.stat(path, job)
+                                if existing:
+                                    check = Path(directory) / uuid.uuid4().hex
+                                    if not existing['directory'] and destination.download_file(existing, check, job) == digest:
+                                        continue
+                                    path = 'legacy-' + fingerprint + '/versions/' + digest + '/' + row['path']
+                                    existing = destination.stat(path, job)
+                                    if existing:
+                                        check = Path(directory) / uuid.uuid4().hex
+                                        if not existing['directory'] and destination.download_file(existing, check, job) == digest:
+                                            continue
+                                        raise ValueError('旧文件迁移目标已被不同内容占用：' + path)
+                            destination.upload_file(local, path, job)
+                            status['copied'] += 1
+                    status['pending'] = False
+            except Exception as exc:
+                status['warning'] = '旧中转目录迁移未完成，下次访问将重试：' + str(exc)
+            finally:
+                if source:
+                    source.close()
+                with self.lock:
+                    latest = json.loads(self.path.read_text('utf-8'))
+                    latest.setdefault('migration_sources', {})[checkpoint] = status
+                    atomic_json(self.path, latest)
+            return status
 
     def run(self, method, job):
         guard = method in ('upload', 'cleanup', 'mkdir', 'delete')
@@ -406,10 +528,10 @@ class Relay:
             with self.remote(job) as remote:
                 if method == 'test':
                     remote.ensure('', job)
-                    return {'message': '连接成功，中转目录可访问', 'entries': remote.listing('', job)}
+                    return {'message': '连接成功，中转目录可访问', 'entries': remote.listing('', job), 'migration': self.config()['migration']}
                 if method == 'list':
                     path = relative(job.params.get('path', ''))
-                    return {'path': path, 'entries': remote.listing(path, job)}
+                    return {'path': path, 'entries': remote.listing(path, job), 'migration': self.config()['migration']}
                 if method == 'mkdir':
                     path = relative(job.params.get('path'), empty=False)
                     remote.ensure(path, job)

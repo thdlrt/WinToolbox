@@ -3,8 +3,9 @@ import { RefreshCw } from 'lucide-react';
 import { errorText, rpc, type Job } from './api';
 import { useApp } from './context';
 import { Button, Modal, Notice, Field } from './ui';
+import { ledgerMigrationMessage, type LedgerMigrationStatus } from './ledgerSyncState';
 
-interface SyncStatus { configured: boolean; syncing: boolean; pending: number; last_sync?: string | number | null; error?: string; conflicts: number; incomplete?: number }
+interface SyncStatus extends LedgerMigrationStatus { configured: boolean; syncing: boolean; pending: number; last_sync?: string | number | null; error?: string; conflicts: number; incomplete?: number }
 interface Conflict { entity_type: string; id: string; title?: string; name?: string; heads: string[]; fields: Record<string, { op_id: string; value: unknown }[]> }
 const labels: Record<string, string> = { name: '名称', title: '名称', date: '日期', amount: '金额', currency: '币种', entry_type: '收支类型', status: '报销状态', notes: '备注', category: '分类', project_id: '项目', settlement_mode: '结算方式', archived: '归档状态', target: '目标', port: '端口', timeout_ms: '超时', attempts: '次数' };
 const show = (value: unknown) => typeof value === 'string' ? value : JSON.stringify(value);
@@ -47,6 +48,7 @@ export default function LedgerSync({ onSynced }: { onSynced: () => void }) {
     finally { setBusy(false); }
   };
   const conflict = conflicts?.[0];
+  const migrationMessage = ledgerMigrationMessage(status);
   const candidateLabel = (field: string, value: unknown) => {
     if (field === 'project_id' && typeof value === 'string') return projectNames[value] || value;
     if (field === 'archived') return value ? '已归档' : '未归档';
@@ -63,7 +65,8 @@ export default function LedgerSync({ onSynced }: { onSynced: () => void }) {
     finally { setBusy(false); }
   };
   return <>
-    <div className="ledger-sync" aria-live="polite"><span>{!status ? '正在读取同步状态…' : !status.configured ? '记账尚未连接 WebDAV' : status.syncing ? '正在合并同步…' : status.error ? '同步失败，本机记录已保留' : status.incomplete ? `等待补齐 ${status.incomplete} 项同步历史` : status.pending ? `待同步 ${status.pending} 项` : status.last_sync ? `已同步 · ${syncTime(status.last_sync)}` : '等待首次同步'}</span><span className="flex-spacer" />{!!status?.conflicts && <Button disabled={busy} onClick={review}>处理冲突 · {status.conflicts}</Button>}{status?.configured ? <Button variant="ghost" disabled={!connected || busy || status.syncing} onClick={sync}><RefreshCw size={14} />立即同步</Button> : <Button variant="ghost" onClick={() => navigate('settings')}>配置 WebDAV</Button>}</div>
+    <div className="ledger-sync" aria-live="polite"><span>{!status ? '正在读取同步状态…' : !status.configured ? '记账尚未连接 WebDAV' : status.syncing ? '正在合并同步…' : status.error ? '同步失败，本机记录已保留' : migrationMessage ? migrationMessage : status.incomplete ? `等待补齐 ${status.incomplete} 项同步历史` : status.pending ? `待同步 ${status.pending} 项` : status.last_sync ? `已同步 · ${syncTime(status.last_sync)}` : '等待首次同步'}</span><span className="flex-spacer" />{!!status?.conflicts && <Button disabled={busy} onClick={review}>处理冲突 · {status.conflicts}</Button>}{status?.configured ? <Button variant="ghost" disabled={!connected || busy || status.syncing} onClick={sync}><RefreshCw size={14} />立即同步</Button> : <Button variant="ghost" onClick={() => { sessionStorage.setItem('wintoolbox-settings-tab', 'data'); navigate('settings'); }}>配置 WebDAV</Button>}</div>
+    {migrationMessage && <Notice tone="warning">{migrationMessage}。旧目录中尚未同步到本机的记录可能暂未显示，连接恢复后会重试。{status?.migration_error && <div>{status.migration_error}</div>}</Notice>}
     {(failure || status?.error) && !conflicts && <Notice tone="warning">{failure || status?.error}</Notice>}
     {conflicts && <Modal title={`同步冲突${conflicts.length ? ` · 剩余 ${conflicts.length} 项` : ''}`} onClose={() => { if (!busy) setConflicts(undefined); }}><div className="modal-body"><p className="small-note">不同字段会自动合并。同一字段有不同修改时，选择需要保留的内容；其他候选仍留在同步历史中。</p>{conflict ? <><p>{conflict.entity_type === 'project' ? '项目' : conflict.entity_type === 'network_profile' ? '网络诊断配置' : '记账条目'} · {conflict.title || conflict.name || conflict.id.slice(0, 8)}</p>{Object.entries(conflict.fields).map(([field, candidates]) => <Field key={field} label={labels[field] || (field.startsWith('attachment:') ? '附件' : field)}><select aria-label={`解决${labels[field] || field}冲突`} value={Object.hasOwn(choices, field) ? candidates.findIndex(candidate => JSON.stringify(candidate.value) === JSON.stringify(choices[field])) : ''} onChange={event => setChoices(value => ({ ...value, [field]: candidates[Number(event.target.value)].value }))}><option value="" disabled>选择保留的值</option>{candidates.map((candidate, index) => <option key={candidate.op_id} value={index}>{candidateLabel(field, candidate.value)}</option>)}</select></Field>)}</> : <p>没有待处理冲突。</p>}{failure && <Notice tone="warning">{failure}</Notice>}<div className="modal-footer"><Button disabled={busy} onClick={() => setConflicts(undefined)}>稍后处理</Button>{conflict && <Button variant="primary" busy={busy} disabled={Object.keys(choices).length !== Object.keys(conflict.fields).length} onClick={resolve}>保存选择</Button>}</div></div></Modal>}
   </>;

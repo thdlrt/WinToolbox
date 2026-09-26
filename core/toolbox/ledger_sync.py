@@ -7,16 +7,20 @@ from .project_memory_sync import MemoryRemote
 
 
 class LedgerRemote(MemoryRemote):
-    def sync(self, store, job):
-        self.ensure_directory()
+    def sync(self, store, job, read_only=False):
         root = self.directory + 'ledger-v1/'
-        for suffix in ('', 'ops/', 'blobs/'):
-            self.mkdir(root + suffix)
+        if read_only:
+            if self.xml(root, 0) is None:
+                return {'uploaded': 0, 'downloaded': 0, 'conflicts': len(store.conflicts()), 'synced_operations': 0}
+        else:
+            self.ensure_directory()
+            for suffix in ('', 'ops/', 'blobs/'):
+                self.mkdir(root + suffix)
         known_names = {name for name, directory in self.children(root + 'ops/') if not directory}
         remote_blobs = {name for name, directory in self.children(root + 'blobs/') if not directory}
         uploaded = downloaded = 0
         # Upload the durable local queue. Retry is idempotent even after lost responses.
-        local_snapshot = store.export_operations()
+        local_snapshot = [] if read_only else store.export_operations()
         synced_ids = {op['op_id'] for op in local_snapshot}
         for op in local_snapshot:
             job.check_cancelled()

@@ -20,7 +20,7 @@ from toolbox.jobs import Cancelled
 
 class Dav:
     def __init__(self):
-        self.dirs = {'/dav/', '/dav/中转/'}
+        self.dirs = {'/dav/', '/dav/WinToolbox/', '/dav/WinToolbox/file-relay/'}
         self.files = {}
         self.modified = {}
         self.requests = []
@@ -110,7 +110,8 @@ def fixture(tmp_path, monkeypatch):
     monkeypatch.setattr(relay, 'Remote', create)
     app = App(tmp_path / 'data', register_features=False, register_live=False)
     relay.register(app)
-    app.call('relay.save', {'url': 'http://127.0.0.1/dav/', 'username': 'user', 'password': 'pass', 'remote_path': '中转', 'download_dir': str(tmp_path / 'downloads')})
+    relay.atomic_json(app.data_dir / 'webdav.json', {'url': 'http://127.0.0.1/dav/', 'username': 'user', 'password_dpapi': relay.protect('pass'), 'remote_path': 'WinToolbox'})
+    app.call('relay.save', {'download_dir': str(tmp_path / 'downloads')})
     try: yield app, app.relay, dav
     finally: app.close()
 
@@ -126,7 +127,7 @@ def finish(app, record):
     raise AssertionError('timeout')
 
 
-def test_shared_connection_defaults_to_global_and_keeps_relay_path(fixture):
+def test_shared_connection_derives_relay_path_from_global_root(fixture):
     app, service, _ = fixture
     old = json.loads(service.path.read_text('utf-8'))
     old.pop('use_shared', None)
@@ -135,7 +136,7 @@ def test_shared_connection_defaults_to_global_and_keeps_relay_path(fixture):
               'password_dpapi': relay.protect('shared-secret'), 'remote_path': 'backups'}
     relay.atomic_json(app.data_dir / 'webdav.json', shared)
     result = service.get()
-    assert result['use_shared'] and result['configured'] and result['remote_path'] == '中转'
+    assert result['use_shared'] and result['configured'] and result['remote_path'] == 'backups/file-relay'
     assert result['url'] == shared['url'] and result['username'] == 'shared-user'
     assert 'password_dpapi' not in result
     service.save({'use_shared': True, 'remote_path': '共享/中转'})
@@ -150,10 +151,11 @@ def test_shared_connection_defaults_to_global_and_keeps_relay_path(fixture):
 
 
 def test_shared_missing_does_not_fallback_to_old_credentials(fixture):
-    _, service, _ = fixture
-    result = service.save({'use_shared': True, 'remote_path': 'inbox'})
+    app, service, _ = fixture
+    (app.data_dir / 'webdav.json').unlink()
+    result = service.save({'use_shared': False, 'remote_path': 'inbox', 'url': 'https://ignored.invalid/', 'password': 'ignored'})
     assert not result['configured'] and not result['has_password'] and result['url'] == ''
-    assert result['remote_path'] == 'inbox'
+    assert result['remote_path'] == 'WinToolbox/file-relay'
 
 
 def test_background_upload_browse_download_unicode_zero_bytes(fixture, tmp_path):
@@ -175,10 +177,10 @@ def test_background_upload_browse_download_unicode_zero_bytes(fixture, tmp_path)
 def test_same_name_never_overwrites_remote_or_local(fixture, tmp_path):
     app, service, dav = fixture
     source = tmp_path / 'a.txt'; source.write_bytes(b'new')
-    dav.add('/dav/中转/a.txt', b'old')
+    dav.add('/dav/WinToolbox/file-relay/a.txt', b'old')
     result = service.run('upload', Job(service, paths=[str(source)], move=True))
     assert result['errors'] and source.read_bytes() == b'new'
-    assert dav.files['/dav/中转/a.txt'] == b'old'
+    assert dav.files['/dav/WinToolbox/file-relay/a.txt'] == b'old'
     download = tmp_path / 'downloads'; download.mkdir(); (download / 'a.txt').write_bytes(b'local')
     result = service.run('download', Job(service, paths=['a.txt']))
     assert (download / 'a.txt').read_bytes() == b'local'
@@ -190,7 +192,7 @@ def test_move_only_after_get_hash_verification(fixture, tmp_path):
     source = tmp_path / 'file.txt'; source.write_bytes(b'important')
     result = service.run('upload', Job(service, paths=[str(source)], move=True))
     assert not source.exists() and result['moved'] == [str(source)]
-    assert dav.files['/dav/中转/file.txt'] == b'important'
+    assert dav.files['/dav/WinToolbox/file-relay/file.txt'] == b'important'
 
 
 def test_failed_verification_preserves_source(fixture, tmp_path):
@@ -208,9 +210,9 @@ def test_fnos_proxy_move_falls_back_without_overwrite(fixture, tmp_path):
     source.write_bytes(b'proxy-test')
     result = service.run('upload', Job(service, paths=[str(source)]))
     assert result['uploaded'] == ['proxy-test.txt'] and not result['errors']
-    assert dav.files['/dav/中转/proxy-test.txt'] == b'proxy-test'
+    assert dav.files['/dav/WinToolbox/file-relay/proxy-test.txt'] == b'proxy-test'
     result = service.run('upload', Job(service, paths=[str(source)]))
-    assert result['errors'] and dav.files['/dav/中转/proxy-test.txt'] == b'proxy-test'
+    assert result['errors'] and dav.files['/dav/WinToolbox/file-relay/proxy-test.txt'] == b'proxy-test'
 
 
 def test_source_edit_during_upload_not_published(fixture, tmp_path):
@@ -231,38 +233,38 @@ def test_move_failure_cleans_partial_object_and_keeps_source(fixture, tmp_path):
 
 def test_cleanup_recursive_age_scope_and_preview_confirmation(fixture):
     _, service, dav = fixture
-    dav.dirs.add('/dav/中转/子目录/')
-    dav.add('/dav/中转/old', age=9)
-    dav.add('/dav/中转/new', age=1)
-    dav.add('/dav/中转/子目录/older', age=30)
+    dav.dirs.add('/dav/WinToolbox/file-relay/子目录/')
+    dav.add('/dav/WinToolbox/file-relay/old', age=9)
+    dav.add('/dav/WinToolbox/file-relay/new', age=1)
+    dav.add('/dav/WinToolbox/file-relay/子目录/older', age=30)
     dav.add('/dav/outside', age=30)
     plan = service.run('cleanup_preview', Job(service, days=7))
     assert len(plan['files']) == 2
     assert len(dav.files) == 4
     result = service.run('cleanup', Job(service, token=plan['token']))
     assert len(result['removed']) == 2
-    assert '/dav/中转/new' in dav.files and '/dav/outside' in dav.files
-    assert '/dav/中转/子目录/' in dav.dirs
+    assert '/dav/WinToolbox/file-relay/new' in dav.files and '/dav/outside' in dav.files
+    assert '/dav/WinToolbox/file-relay/子目录/' in dav.dirs
     with pytest.raises(ValueError, match='失效'): service.run('cleanup', Job(service, token=plan['token']))
 
 
 def test_cleanup_skips_concurrent_edit_before_check_and_delete(fixture):
     _, service, dav = fixture
-    dav.add('/dav/中转/old', age=9)
+    dav.add('/dav/WinToolbox/file-relay/old', age=9)
     plan = service.run('cleanup_preview', Job(service, days=7))
-    dav.add('/dav/中转/old', b'changed', age=9)
+    dav.add('/dav/WinToolbox/file-relay/old', b'changed', age=9)
     result = service.run('cleanup', Job(service, token=plan['token']))
     assert result['skipped'] == ['old']
     plan = service.run('cleanup_preview', Job(service, days=7))
     dav.before_delete = lambda name: dav.add(name, b'newer')
     result = service.run('cleanup', Job(service, token=plan['token']))
-    assert result['skipped'] == ['old'] and dav.files['/dav/中转/old'] == b'newer'
+    assert result['skipped'] == ['old'] and dav.files['/dav/WinToolbox/file-relay/old'] == b'newer'
 
 
 def test_cleanup_without_etag_is_explicitly_skipped(fixture):
     _, service, dav = fixture
     dav.no_etag = True
-    dav.add('/dav/中转/old', age=9)
+    dav.add('/dav/WinToolbox/file-relay/old', age=9)
     plan = service.run('cleanup_preview', Job(service, days=7))
     assert not plan['files'] and plan['skipped'] == 1
 
@@ -273,7 +275,8 @@ def test_expired_plan_and_changed_config_reject(fixture):
     service.plans[plan['token']]['expires'] = 0
     with pytest.raises(ValueError): service.run('cleanup', Job(service, token=plan['token']))
     queued = Job(service)
-    service.save({'remote_path': '另一个目录'})
+    shared = json.loads((service.app.data_dir / 'webdav.json').read_text('utf-8'))
+    relay.atomic_json(service.app.data_dir / 'webdav.json', {**shared, 'remote_path': '另一个目录'})
     with pytest.raises(ValueError, match='变化'): service.run('list', queued)
 
 
@@ -291,7 +294,7 @@ def test_credential_redaction_and_reset(fixture):
     finish(app, record)
     with pytest.raises(ValueError, match='凭据'):
         app.jobs.submit('relay.upload', {'password': 'must-not-log'})
-    assert not service.save({'username': 'someone-else'})['has_password']
+    assert service.save({'username': 'someone-else'})['has_password']  # Private overrides are ignored.
 
 
 def test_shell_enqueue_copies_to_root_and_tracks_job(fixture, tmp_path):
@@ -301,7 +304,7 @@ def test_shell_enqueue_copies_to_root_and_tracks_job(fixture, tmp_path):
     assert service.pending({}) == {'job_id': record['id']}
     assert service.pending({}) is None
     result = finish(app, record)
-    assert file.exists() and not result['moved'] and '/dav/中转/shell.txt' in dav.files
+    assert file.exists() and not result['moved'] and '/dav/WinToolbox/file-relay/shell.txt' in dav.files
 
 
 def test_registry_command_uses_only_quoted_executable_and_file_argument(monkeypatch, tmp_path):
@@ -405,7 +408,8 @@ def test_real_http_stream_upload_and_download(tmp_path):
     app = App(tmp_path / 'data', register_features=False, register_live=False)
     try:
         relay.register(app)
-        app.call('relay.save', {'url': f'http://127.0.0.1:{server.server_port}/dav/', 'username': 'user', 'password': 'pass', 'remote_path': '中转', 'download_dir': str(tmp_path / 'downloads')})
+        relay.atomic_json(app.data_dir / 'webdav.json', {'url': f'http://127.0.0.1:{server.server_port}/dav/', 'username': 'user', 'password_dpapi': relay.protect('pass'), 'remote_path': 'WinToolbox'})
+        app.call('relay.save', {'download_dir': str(tmp_path / 'downloads')})
         source = tmp_path / 'large.bin'; source.write_bytes(bytes(range(256)) * 10000)
         result = finish(app, app.call('relay.upload', {'paths': [str(source)]}))
         assert not result['errors'] and result['uploaded'] == ['large.bin']
@@ -436,38 +440,38 @@ def test_only_same_url_trailing_slash_redirect_is_followed(fixture):
 
 def test_empty_directory_download_is_preserved(fixture, tmp_path):
     _, service, dav = fixture
-    dav.dirs.add('/dav/中转/empty/')
+    dav.dirs.add('/dav/WinToolbox/file-relay/empty/')
     result = service.run('download', Job(service, paths=['empty']))
     assert not result['paths'] and (tmp_path / 'downloads/empty').is_dir()
 
 
 def test_selected_delete_preserves_changed_and_unselected_files(fixture):
     _, service, dav = fixture
-    for name in ('selected.txt', 'changed.txt', 'keep.txt'): dav.add('/dav/中转/' + name)
+    for name in ('selected.txt', 'changed.txt', 'keep.txt'): dav.add('/dav/WinToolbox/file-relay/' + name)
     listing = service.run('list', Job(service, path=''))['entries']
     selected = [row for row in listing if row['name'] != 'keep.txt']
-    dav.add('/dav/中转/changed.txt', b'new content')
+    dav.add('/dav/WinToolbox/file-relay/changed.txt', b'new content')
     result = service.run('delete', Job(service, entries=selected))
     assert result['removed'] == ['selected.txt']
     assert result['skipped'] == ['changed.txt']
-    assert '/dav/中转/keep.txt' in dav.files and '/dav/中转/changed.txt' in dav.files
+    assert '/dav/WinToolbox/file-relay/keep.txt' in dav.files and '/dav/WinToolbox/file-relay/changed.txt' in dav.files
 
 
 def test_selected_delete_validates_whole_batch_before_mutation(fixture):
     _, service, dav = fixture
-    dav.add('/dav/中转/keep.txt')
+    dav.add('/dav/WinToolbox/file-relay/keep.txt')
     entry = service.run('list', Job(service, path=''))['entries'][0]
     with pytest.raises(ValueError): service.run('delete', Job(service, entries=[entry, {'path': '../outside'}]))
-    assert '/dav/中转/keep.txt' in dav.files
+    assert '/dav/WinToolbox/file-relay/keep.txt' in dav.files
     with pytest.raises(ValueError): service.run('delete', Job(service, entries=[{**entry, 'directory': True}]))
     with pytest.raises(ValueError): service.run('delete', Job(service, entries=[{**entry, 'etag': ''}]))
 
 
 def test_drag_cache_preserves_names_and_empty_directories(fixture, tmp_path):
     app, service, dav = fixture
-    dav.dirs.add('/dav/中转/folder/')
-    dav.dirs.add('/dav/中转/folder/empty/')
-    dav.add('/dav/中转/folder/中文.txt', b'drag fixture')
+    dav.dirs.add('/dav/WinToolbox/file-relay/folder/')
+    dav.dirs.add('/dav/WinToolbox/file-relay/folder/empty/')
+    dav.add('/dav/WinToolbox/file-relay/folder/中文.txt', b'drag fixture')
     result = finish(app, app.call('relay.prepare_drag', {'paths': ['folder']}))
     cached = Path(result['paths'][0])
     assert cached.is_relative_to(app.data_dir / 'relay-drag-cache')
@@ -475,7 +479,7 @@ def test_drag_cache_preserves_names_and_empty_directories(fixture, tmp_path):
     assert (cached / '中文.txt').read_bytes() == b'drag fixture'
     assert (cached / 'empty').is_dir()
     assert not (tmp_path / 'downloads/folder').exists()
-    assert dav.files['/dav/中转/folder/中文.txt'] == b'drag fixture'
+    assert dav.files['/dav/WinToolbox/file-relay/folder/中文.txt'] == b'drag fixture'
 
 
 def test_connection_edit_fails_fast_during_mutation(fixture):
@@ -483,14 +487,14 @@ def test_connection_edit_fails_fast_during_mutation(fixture):
     with service.write_lock:
         with pytest.raises(ValueError, match='正在进行'):
             service.save({'remote_path': 'different'})
-    assert service.config()['remote_path'] == '中转'
+    assert service.config()['remote_path'] == 'WinToolbox/file-relay'
 
 
 def test_fnos_existing_collection_with_missing_optional_properties(fixture):
     _, service, _ = fixture
     remote = relay.Remote(service.config())
     remote.client.close()
-    xml = '<D:multistatus xmlns:D="DAV:"><D:response><D:href>/dav/%E4%B8%AD%E8%BD%AC/</D:href><D:propstat><D:prop><D:resourcetype><D:collection/></D:resourcetype><D:getlastmodified>Thu, 24 Sep 2026 03:17:45 GMT</D:getlastmodified></D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat><D:propstat><D:prop><D:getcontentlength/><D:getetag/></D:prop><D:status>HTTP/1.1 404 Not Found</D:status></D:propstat></D:response></D:multistatus>'
+    xml = '<D:multistatus xmlns:D="DAV:"><D:response><D:href>/dav/WinToolbox/file-relay/</D:href><D:propstat><D:prop><D:resourcetype><D:collection/></D:resourcetype><D:getlastmodified>Thu, 24 Sep 2026 03:17:45 GMT</D:getlastmodified></D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat><D:propstat><D:prop><D:getcontentlength/><D:getetag/></D:prop><D:status>HTTP/1.1 404 Not Found</D:status></D:propstat></D:response></D:multistatus>'
     methods = []
     def response(request):
         methods.append(request.method)
@@ -499,5 +503,5 @@ def test_fnos_existing_collection_with_missing_optional_properties(fixture):
     try:
         remote.ensure('')
         assert remote.listing('') == []
-        assert methods == ['PROPFIND', 'PROPFIND']
+        assert methods and set(methods) == {'PROPFIND'}  # Existing roots need no MKCOL.
     finally: remote.close()

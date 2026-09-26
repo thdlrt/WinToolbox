@@ -71,16 +71,16 @@ def register(app):
         return {'ok': True}
 
     def remote():
-        path = app.data_dir / 'webdav.json'
-        value = json.loads(path.read_text('utf-8')) if path.exists() else {}
+        from ..webdav_layout import shared_config
+        value = shared_config(app.data_dir)
         if not value.get('url') or not value.get('username') or not value.get('password_dpapi'):
             raise ValueError('请先在设置中配置 WebDAV 地址、账号和密码')
         return MemoryRemote(value)
 
     def status(_):
         value = config()
-        settings = app.data_dir / 'webdav.json'
-        dav = json.loads(settings.read_text('utf-8')) if settings.exists() else {}
+        from ..webdav_layout import shared_config
+        dav = shared_config(app.data_dir)
         webdav_configured = bool(dav.get('url') and dav.get('username') and dav.get('password_dpapi'))
         ssh_count = sum(bool(target.get('enabled')) for target in ssh_targets()['targets'])
         return {**store.info(), 'configured': webdav_configured or bool(ssh_count), 'webdav_configured': webdav_configured, 'ssh_target_count': ssh_count,
@@ -210,15 +210,21 @@ def register(app):
         app.jobs.register('memory.' + name, runner)
         app.register('memory.' + name, lambda p, tool='memory.' + name: app.jobs.submit(tool, p))
 
+    sync_wake = threading.Event()
+
     def auto_worker():
         import time
         last_attempt = 0.0
-        while not stop.wait(2):
+        while not stop.is_set():
+            force = sync_wake.wait(2)
+            sync_wake.clear()
+            if stop.is_set():
+                break
             try:
                 value = status({})
                 interval = value.get('interval_seconds', 300)
                 if (not value['auto_sync'] or not value['configured'] or app.maintenance
-                        or time.monotonic() - last_attempt < interval):
+                        or not force and time.monotonic() - last_attempt < interval):
                     continue
                 with app.data_lock:
                     if app.maintenance or stop.is_set():
@@ -237,11 +243,13 @@ def register(app):
     thread.start()
     def stop_worker():
         stop.set()
+        sync_wake.set()
         thread.join(timeout=3)
     def close():
         stop_worker()
         store.close()
     app.memory_stop = stop_worker
+    app.memory_auto_sync_wake = sync_wake.set
     app.memory_close = close
     app.memory_before_restore = store.close
     app.memory_after_restore = store.reopen

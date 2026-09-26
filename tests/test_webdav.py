@@ -165,7 +165,7 @@ def test_config_redaction_normalization_and_password_retention(pair):
     assert webdav.normalized_url('https://example.com:443/dav') == 'https://example.com/dav/'
     assert webdav.normalized_url('http://localhost:80/dav') == 'http://localhost/dav/'
     assert webdav.normalized_url('https://example.com:8443/dav') == 'https://example.com:8443/dav/'
-    for url in ('http://example.com/dav', 'https://name:password@example.com/', 'https://example.com/?token=secret', 'https://example.com/../'):
+    for url in ('https://name:password@example.com/', 'https://example.com/?token=secret', 'https://example.com/../'):
         with pytest.raises(ValueError):
             app.call('webdav.save', {'url': url})
     for path in ('../escape', 'parent//child', 'parent/%2e%2e/child', 'parent\\child'):
@@ -200,7 +200,7 @@ def test_all_provider_keys_sync_and_are_reprotected_on_receiving_device(pair, mo
         source.call('webdav.upload')
     # Use the saved scope, as the normal UI does after saving connection options.
     uploaded = finish(source, source.call('webdav.upload', {'backup_password': 'fixture-sync-password'}))['result']
-    payload = server['files']['/dav/重要文件/sync/WinToolbox/' + uploaded['name']]
+    payload = server['files']['/dav/重要文件/sync/WinToolbox/config-backups/windows/' + uploaded['name']]
     assert payload.startswith(backups.MAGIC)
     assert all(provider['api_key'].encode() not in payload for provider in providers)
     device[0] = 'target'
@@ -229,7 +229,7 @@ def test_only_last_directory_created_and_redirects_rejected(pair):
         app.call('webdav.test')
 
 
-def test_encrypted_roundtrip_preserves_media_rebases_paths_and_saves_recovery(pair):
+def test_encrypted_config_roundtrip_excludes_media_and_saves_recovery(pair):
     source, target, server = pair
     source.call('settings.update', {'preferences': {'fixture': 'remote-value'}})
     source.call('settings.update', {'providers': [{'id': 'fixture', 'kind': 'openai', 'name': 'fixture', 'base_url': 'https://example.invalid/v1', 'api_key': 'fixture-api-key'}]})
@@ -244,12 +244,11 @@ def test_encrypted_roundtrip_preserves_media_rebases_paths_and_saves_recovery(pa
     assert not any(name.endswith('.part') for name in server['files'])
     assert target.call('webdav.list')['snapshots'][0]['name'] == uploaded['name']
     restored = finish(target, target.call('webdav.restore', {'name': uploaded['name'], 'backup_password': 'fixture-backup-password'}))['result']
-    assert Path(restored['recovery_path']).is_file()
+    assert Path(restored['recovery_path']).is_dir()
     assert target.settings.get()['preferences']['fixture'] == 'remote-value'
     assert target.settings.secret('fixture') == 'fixture-api-key'
-    migrated = json.loads((target.data_dir / 'practice/items' / ('a' * 64 + '.json')).read_text())
-    assert migrated['path'].startswith(str(target.data_dir))
-    assert (target.data_dir / 'practice/audio/fixture.wav').read_bytes() == b'RIFF-fixture-audio'
+    assert not (target.data_dir / 'practice/items' / ('a' * 64 + '.json')).exists()
+    assert not (target.data_dir / 'practice/audio/fixture.wav').exists()
     assert (target.data_dir / 'webdav.json').read_bytes() == config_before
     serialized = json.dumps(source.jobs.list() + target.jobs.list())
     assert not any(secret in serialized for secret in ('fixture-backup-password', 'fixture-dav-password', 'fixture-api-key'))
@@ -269,7 +268,7 @@ def test_wrong_password_and_tampered_backup_do_not_change_data(pair):
     assert not (target.data_dir.parent / 'target-recovery').exists()
 
 
-def test_empty_snapshot_propagates_deletions_but_excluded_models_survive(pair):
+def test_configuration_snapshot_preserves_existing_business_data(pair):
     source, target, _ = pair
     old = target.data_dir / 'practice/items/old.json'
     old.write_text('old paragraph')
@@ -277,10 +276,9 @@ def test_empty_snapshot_propagates_deletions_but_excluded_models_survive(pair):
     models.write_bytes(b'keep model')
     uploaded = finish(source, source.call('webdav.upload'))['result']
     restored = finish(target, target.call('webdav.restore', {'name': uploaded['name']}))['result']
-    assert not old.exists() and models.read_bytes() == b'keep model'
-    assert Path(restored['recovery_path']).is_file()
-    with zipfile.ZipFile(restored['recovery_path']) as archive:
-        assert archive.read('practice/items/old.json') == b'old paragraph'
+    assert old.read_text() == 'old paragraph' and models.read_bytes() == b'keep model'
+    assert Path(restored['recovery_path']).is_dir()
+    assert not (Path(restored['recovery_path']) / 'practice').exists()
 
 
 def test_failed_move_never_lists_incomplete_snapshot(pair):

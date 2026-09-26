@@ -1,5 +1,5 @@
 import { strict as assert } from 'node:assert';
-import { emptyWebDavDraft, webdavConnectionParams, webdavBackupPasswordValid, webdavDirty } from './webdavState.ts';
+import { emptyWebDavDraft, webdavConnectionParams, webdavBackupPasswordValid, webdavDirty, webdavSnapshotKey } from './webdavState.ts';
 import { migratedUiPreferences, validFavorites, validTheme } from './uiPreferences.ts';
 
 const saved = { url: 'https://dav.example.com', remote_path: '重要文件/sync/WinToolbox', username: 'demo', has_password: true };
@@ -19,6 +19,7 @@ assert.equal(webdavBackupPasswordValid(true, '1234567'), false);
 assert.equal(webdavBackupPasswordValid(false, '1234567'), false);
 assert.equal(webdavBackupPasswordValid(true, '12345678'), true);
 assert.equal(webdavBackupPasswordValid(false, '12345678'), true);
+assert.notEqual(webdavSnapshotKey({ name: 'same.wtbak', location: 'config' }), webdavSnapshotKey({ name: 'same.wtbak', location: 'legacy_root' }), 'same backup name in old/new directories must keep distinct selection and restore location');
 
 const migrated = migratedUiPreferences({ theme: 'system' }, 'dark', '["practice","captions"]');
 assert.equal(migrated.theme, 'dark', 'first migration preserves the existing local theme');
@@ -34,4 +35,4 @@ assert.equal(validTheme('system'), true);
 assert.equal(validTheme('unexpected'), false);
 assert.equal(validFavorites(['media']), true);
 assert.equal(validFavorites([1]), false);
-console.log('WebDAV/preferences: 27 assertions passed; no network or credential access.');
+console.log('WebDAV/preferences: 28 assertions passed; no network or credential access.');
