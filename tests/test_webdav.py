@@ -146,7 +146,7 @@ def pair(tmp_path, monkeypatch, server):
     apps = [App(tmp_path / name, register_live=False) for name in ('source', 'target')]
     for app in apps:
         app.call('webdav.save', {'url': server['url'], 'remote_path': '重要文件/sync/WinToolbox',
-                                'username': 'fixture-user', 'password': 'fixture-dav-password'})
+                                'username': 'fixture-user', 'password': 'fixture-dav-password', 'include_secrets': False})
     yield (*apps, server)
     for app in apps:
         app.close()
@@ -171,6 +171,48 @@ def test_config_redaction_normalization_and_password_retention(pair):
     for path in ('../escape', 'parent//child', 'parent/%2e%2e/child', 'parent\\child'):
         with pytest.raises(ValueError):
             app.call('webdav.save', {'remote_path': path})
+
+
+def test_new_sync_configuration_includes_api_keys_by_default(tmp_path):
+    app = App(tmp_path / 'fresh', register_live=False)
+    try:
+        assert app.call('webdav.get')['include_secrets'] is True
+    finally:
+        app.close()
+        app.jobs.pool.shutdown(wait=True)
+
+
+def test_all_provider_keys_sync_and_are_reprotected_on_receiving_device(pair, monkeypatch):
+    source, target, server = pair
+    device = ['source']
+    def device_protect(value, decrypt=False):
+        if decrypt:
+            prefix, encoded = value.split(':', 1)
+            assert prefix == device[0], 'A source-device ciphertext was copied to the target'
+            return base64.b64decode(encoded).decode()
+        return device[0] + ':' + base64.b64encode(value.encode()).decode()
+    monkeypatch.setattr('toolbox.settings.protect', device_protect)
+    providers = [{'id': kind, 'kind': kind, 'name': kind, 'base_url': 'https://example.invalid/v1',
+                  'api_key': 'fixture-secret-' + kind} for kind in ('dashscope', 'openai', 'gemini')]
+    source.call('settings.update', {'providers': providers})
+    source.call('webdav.save', {'include_secrets': True})
+    with pytest.raises(ValueError, match='8'):
+        source.call('webdav.upload')
+    # Use the saved scope, as the normal UI does after saving connection options.
+    uploaded = finish(source, source.call('webdav.upload', {'backup_password': 'fixture-sync-password'}))['result']
+    payload = server['files']['/dav/重要文件/sync/WinToolbox/' + uploaded['name']]
+    assert payload.startswith(backups.MAGIC)
+    assert all(provider['api_key'].encode() not in payload for provider in providers)
+    device[0] = 'target'
+    finish(target, target.call('webdav.restore', {'name': uploaded['name'], 'backup_password': 'fixture-sync-password'}))
+    assert all(provider['has_key'] for provider in target.settings.get()['providers'])
+    for provider in providers:
+        assert target.settings.secret(provider['id']) == provider['api_key']
+        assert target.settings.secrets[provider['id']].startswith('target:')
+    stored = target.settings.secret_path.read_text('utf-8') + target.settings.path.read_text('utf-8')
+    logs = json.dumps(source.jobs.list() + target.jobs.list())
+    assert all(provider['api_key'] not in stored + logs for provider in providers)
+    assert 'fixture-sync-password' not in logs
 
 
 def test_only_last_directory_created_and_redirects_rejected(pair):

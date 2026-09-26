@@ -255,12 +255,9 @@ def sendto_shortcut(enabled=None, exe=None):
     path = sendto_path()
     if enabled is True:
         path.parent.mkdir(parents=True, exist_ok=True)
-        # Paths travel as environment values, never interpolated into executable script text.
-        script = "$ErrorActionPreference='Stop'; $s=New-Object -ComObject WScript.Shell; $l=$s.CreateShortcut($env:WINTOOLBOX_RELAY_LINK); $l.TargetPath=$env:WINTOOLBOX_RELAY_EXE; $l.Arguments='--relay-upload'; $l.WorkingDirectory=[IO.Path]::GetDirectoryName($env:WINTOOLBOX_RELAY_EXE); $l.Save()"
-        result = subprocess.run(['powershell.exe', '-NoProfile', '-NonInteractive', '-Command', script],
-            env={**os.environ, 'WINTOOLBOX_RELAY_LINK': str(path), 'WINTOOLBOX_RELAY_EXE': str(exe)},
-            capture_output=True, timeout=20, creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
-        if result.returncode or not path.is_file(): raise ValueError('Windows 发送到快捷方式创建失败')
+        from ..windows_shortcuts import create_shortcut
+        create_shortcut(path, exe, '--relay-upload')
+        if not path.is_file(): raise ValueError('Windows 发送到快捷方式创建失败')
     elif enabled is False:
         path.unlink(missing_ok=True)
     return path.is_file()

@@ -19,7 +19,7 @@ from ..settings import atomic_json, protect
 
 
 DEFAULTS = {'url': '', 'remote_path': 'WinToolbox', 'username': '', 'include_media': True,
-            'include_models': False, 'include_secrets': False}
+            'include_models': False, 'include_secrets': True}
 SNAPSHOT = re.compile(r'^wintoolbox-\d{8}T\d{6}Z-[a-f0-9]{32}(?:\.enc)?\.wtbak$')
 PROPFIND = b'<?xml version="1.0"?><d:propfind xmlns:d="DAV:"><d:prop><d:resourcetype/><d:getcontentlength/><d:getlastmodified/></d:prop></d:propfind>'
 MAX_SNAPSHOT = 1024 ** 4

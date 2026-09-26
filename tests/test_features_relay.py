@@ -339,17 +339,13 @@ def test_registry_command_uses_only_quoted_executable_and_file_argument(monkeypa
 
 
 def test_sendto_shortcut_is_created_and_removed_in_fixture_only(monkeypatch, tmp_path):
-    link = tmp_path / 'sendto/文件中转站.lnk'
-    exe = tmp_path / "tool box's.exe"; exe.write_bytes(b'fixture')
+    link = tmp_path / '中文目录/sendto/文件中转站.lnk'
+    exe = tmp_path / "tool box's 工具.exe"; exe.write_bytes(b'fixture')
     monkeypatch.setattr(relay, 'sendto_path', lambda: link)
-    original_run = relay.subprocess.run
-    def checked_run(*args, **kwargs):
-        result = original_run(*args, **kwargs)
-        assert result.returncode == 0, result.stderr.decode('utf-8', errors='replace')
-        return result
-    monkeypatch.setattr(relay.subprocess, 'run', checked_run)
     assert relay.sendto_shortcut(True, exe)
     assert link.stat().st_size > 0
+    assert '--relay-upload'.encode('utf-16-le') in link.read_bytes()
+    assert exe.name.encode('utf-16-le') in link.read_bytes()
     assert not relay.sendto_shortcut(False, exe)
 
 

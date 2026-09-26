@@ -13,12 +13,12 @@ const done = (status: string) => ['completed', 'success', 'succeeded'].includes(
 const sizeText = (value?: number) => value === undefined ? '' : value >= 1024 ** 3 ? `${(value / 1024 ** 3).toFixed(1)} GB` : value >= 1024 ** 2 ? `${(value / 1024 ** 2).toFixed(1)} MB` : `${Math.max(1, Math.round(value / 1024))} KB`;
 
 export default function WebDavSync() {
-  const { connected, jobs, track, refreshJobs, refreshSettings } = useApp();
+  const { connected, jobs, track, refreshJobs, refreshSettings, settings } = useApp();
   const [saved, setSaved] = useState<WebDavConnection>();
   const [draft, setDraft] = useState<WebDavDraft>(emptyWebDavDraft);
   const [includeMedia, setIncludeMedia] = useState(true);
   const [includeModels, setIncludeModels] = useState(false);
-  const [includeSecrets, setIncludeSecrets] = useState(false);
+  const [includeSecrets, setIncludeSecrets] = useState(true);
   const [backupPassword, setBackupPassword] = useState('');
   const [restorePassword, setRestorePassword] = useState('');
   const [snapshots, setSnapshots] = useState<WebDavSnapshot[]>([]);
@@ -135,8 +135,9 @@ export default function WebDavSync() {
     </fieldset>
     <div className="webdav-connection-actions"><span className="small-note">{dirty ? '请先保存连接，再上传或恢复。' : ''}</span><Button disabled={!connected || !saved || locked || !draft.url.trim() || (!dirty && !optionsDirty) || restart} busy={busy === 'save'} onClick={save}><Save size={14} />保存连接</Button><Button disabled={!usable} busy={busy === 'test'} onClick={test}><Link2 size={14} />测试连接</Button></div>
     <div className="section-divider" />
-    <div className="inline-checks webdav-options"><CheckField checked={includeMedia} disabled={locked || restart} onChange={setIncludeMedia} label="包含媒体缓存" hint="录音、朗读与媒体结果" /><CheckField checked={includeModels} disabled={locked || restart} onChange={setIncludeModels} label="包含本地模型" /><CheckField checked={includeSecrets} disabled={locked || restart} onChange={setIncludeSecrets} label="包含 API 密钥" /></div>
-    <div className="webdav-upload"><Field label={includeSecrets ? '备份密码（必填）' : '备份密码（可选）'} hint={includeSecrets ? '包含 API 密钥时，至少 8 位。' : '填写后加密快照，至少 8 位；与 WebDAV 密码不同。'}><input type="password" autoComplete="new-password" disabled={locked || restart} value={backupPassword} onChange={event => setBackupPassword(event.target.value)} placeholder={includeSecrets ? '至少 8 位' : '留空不加密'} /></Field><Button variant="primary" disabled={!usable || !webdavBackupPasswordValid(includeSecrets, backupPassword)} busy={busy === 'upload'} onClick={upload}><ArrowUpFromLine size={15} />上传快照</Button></div>
+    <div className="inline-checks webdav-options"><CheckField checked={includeMedia} disabled={locked || restart} onChange={setIncludeMedia} label="包含媒体缓存" hint="录音、朗读与媒体结果" /><CheckField checked={includeModels} disabled={locked || restart} onChange={setIncludeModels} label="包含本地模型" /><CheckField checked={includeSecrets} disabled={locked || restart} onChange={setIncludeSecrets} label="同步 API 服务密钥" hint="包含百炼及“其他 API 服务”的密钥，随配置加密同步。" /></div>
+    {!includeSecrets && settings?.providers.some(provider => provider.has_key) && <Notice>当前只同步服务配置，不含 API 密钥；另一台电脑恢复后需要重新填写密钥。</Notice>}
+    <div className="webdav-upload"><Field label={includeSecrets ? '备份密码（必填）' : '备份密码（可选）'} hint={includeSecrets ? '至少 8 位；另一台电脑恢复时输入同一密码，密钥会重新加密保存在接收电脑。' : '填写后加密快照，至少 8 位；与 WebDAV 密码不同。'}><input type="password" autoComplete="new-password" disabled={locked || restart} value={backupPassword} onChange={event => setBackupPassword(event.target.value)} placeholder={includeSecrets ? '至少 8 位' : '留空不加密'} /></Field><Button variant="primary" disabled={!usable || !webdavBackupPasswordValid(includeSecrets, backupPassword)} busy={busy === 'upload'} onClick={upload}><ArrowUpFromLine size={15} />上传快照</Button></div>
     {progressJob && activeJob(progressJob.status) && <div className="webdav-progress"><span>{progressJob.message || '正在同步…'}</span><Button variant="ghost" busy={cancelling} disabled={!connected || progressJob.status === 'cancelling'} onClick={cancelSync}>取消</Button><Progress value={progressJob.progress || 0} /></div>}
     {failure && <Notice tone="warning"><span className="webdav-message">{failure}</span></Notice>}
     {message && <Notice tone="success"><span className="webdav-message">{message}</span>{restart && <p>请重启工具箱以加载恢复的数据。</p>}{recoveryPath && <button className="inline-link" onClick={() => void native.open(recoveryPath).catch(report)}><FolderOpen size={13} />打开恢复前备份</button>}</Notice>}
