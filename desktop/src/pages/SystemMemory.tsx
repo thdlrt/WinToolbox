@@ -17,8 +17,10 @@ export default function SystemMemoryPage() {
   const [config, setConfig] = useState<Preferences>({ mode: 'default' });
   const [saved, setSaved] = useState<Preferences>();
   const [busy, setBusy] = useState(false);
-  const recent = jobs.filter(j => j.tool === 'memory.clean' || j.tool === 'memory.configure') as MemoryJob[];
+  const [helper, setHelper] = useState<{ installed: boolean; present?: boolean }>();
+  const recent = jobs.filter(j => j.tool === 'memory.clean' || j.tool === 'memory.configure' || j.tool.startsWith('memory.helper.')) as MemoryJob[];
   const running = recent.some(j => activeJob(j.status));
+  useEffect(() => { if (connected && !running) void rpc<{ installed: boolean }>('memory.helper.status').then(setHelper).catch(error); }, [connected, running, error]);
   useEffect(() => {
     if (!connected) return;
     let disposed = false;
@@ -35,7 +37,7 @@ export default function SystemMemoryPage() {
   };
   const launch = async (method: string) => {
     setBusy(true);
-    try { const value = await run(() => rpc<MemoryJob>(method)); if (value) track(value, method === 'memory.clean' ? '正在请求内存清理' : '正在打开 Mem Reduct'); }
+    try { const value = await run(() => rpc<MemoryJob>(method)); if (value) track(value, method === 'memory.clean' ? '正在请求内存清理' : method.startsWith('memory.helper.') ? '正在配置清理组件' : '正在打开 Mem Reduct'); }
     finally { setBusy(false); }
   };
   const dirty = config.mode !== saved?.mode;
@@ -55,12 +57,16 @@ export default function SystemMemoryPage() {
       </div>
       <div className="ram-setting-footer"><span className="muted">保存后同时应用到悬浮球的一键清理。</span><Button disabled={!saved || !dirty || busy || running} onClick={() => void save()}>保存设置</Button></div>
     </Section>
+    <Section title="免重复授权">
+      <p className="muted">{helper?.installed ? '已启用。工具箱退出、更新或电脑重启后仍可直接清理，不再反复弹出管理员授权。' : helper?.present ? '组件已安装但不可用，请修复；不会自动重复申请权限。' : '首次安装固定用途清理组件需要一次 Windows 授权，之后日常清理无需重复授权。点击立即清理也会自动完成首次安装。'}</p>
+      <div className="button-row"><Button disabled={busy || running || !connected} onClick={() => void launch('memory.helper.install')}>{helper?.present ? '修复清理组件' : '启用免重复授权'}</Button>{helper?.present && <Button disabled={busy || running} onClick={() => { if (window.confirm('移除免重复授权组件？以后首次清理需要重新授权安装。')) void launch('memory.helper.remove'); }}>移除组件</Button>}</div>
+    </Section>
     <Section title="自动清理与高级设置" action={<Button disabled={busy || running} onClick={() => void launch('memory.settings.open')}><ExternalLink size={16}/>打开 Mem Reduct 设置</Button>}>
       <p className="muted">在原版窗口的“文件 → 设置”中配置内存区域、占用阈值、定时间隔、快捷键和结果通知。启用自动清理后，需保持 Mem Reduct 在托盘运行。</p>
-      <p className="muted">原版的区域与自动清理设置由 Mem Reduct 管理；上方模式用于工具箱及悬浮球的手动清理。首次清理需要 Windows 授权一次；工具箱运行期间复用清理进程，后续不再弹窗。完全退出工具箱会释放该权限。</p>
+      <p className="muted">原版的区域与自动清理设置由 Mem Reduct 管理；上方模式用于工具箱及悬浮球的手动清理。打开原版设置窗口仍可能需要单独授权。</p>
     </Section>
     {recent[0]?.tool === 'memory.clean' && activeJob(recent[0].status) && <MemoryRocket/>}
     {recent[0] && activeJob(recent[0].status) && <Notice>{recent[0].message || '正在处理…'}</Notice>}
-    <Section title="最近操作"><div className="ram-history">{recent.length ? recent.slice(0, 8).map(j => <div key={j.id}><span>{dateText(j.created_at)}</span><span>{j.tool === 'memory.configure' ? '打开设置' : '内存清理'}</span><span>{j.status === 'completed' && j.result?.available_change !== undefined ? `可用内存变化 ${j.result.available_change >= 0 ? '+' : ''}${(j.result.available_change / 1024 ** 2).toFixed(0)} MB` : j.status === 'failed' ? String(j.error || j.message) : statusLabel(j.status)}</span></div>) : <span className="muted">暂无操作记录</span>}</div></Section>
+    <Section title="最近操作"><div className="ram-history">{recent.length ? recent.slice(0, 8).map(j => <div key={j.id}><span>{dateText(j.created_at)}</span><span>{j.tool === 'memory.configure' ? '打开设置' : j.tool === 'memory.helper.install' ? '启用或修复组件' : j.tool === 'memory.helper.remove' ? '移除组件' : '内存清理'}</span><span>{j.status === 'completed' && j.result?.available_change !== undefined ? `可用内存变化 ${j.result.available_change >= 0 ? '+' : ''}${(j.result.available_change / 1024 ** 2).toFixed(0)} MB` : j.status === 'failed' ? String(j.error || j.message) : statusLabel(j.status)}</span></div>) : <span className="muted">暂无操作记录</span>}</div></Section>
   </>;
 }

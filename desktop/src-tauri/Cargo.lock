@@ -5199,7 +5199,7 @@ dependencies = [
 
 [[package]]
 name = "wintoolbox"
-version = "0.1.22"
+version = "0.1.23"
 dependencies = [
  "drag",
  "rfd",

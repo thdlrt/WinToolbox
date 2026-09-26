@@ -51,6 +51,7 @@ if ($LASTEXITCODE -ne 0) { throw "准备 FN Connect 核心失败" }
 if ($LASTEXITCODE -ne 0) { throw '准备 ADB 运行环境失败' }
 & $taskPython "$PSScriptRoot/prepare_memreduct.py"
 if ($LASTEXITCODE -ne 0) { throw '准备 Mem Reduct 失败' }
+& "$PSScriptRoot/prepare_memory_cleaner.ps1"
 Copy-Item -LiteralPath "$taskRoot/docs/THIRD_PARTY.md" -Destination "$taskStage/tools/THIRD_PARTY.md" -Force
 & $taskPython -c 'import pathlib,subprocess,sys; r=subprocess.run([sys.argv[1],sys.argv[2]],stdout=subprocess.PIPE,stderr=subprocess.STDOUT,check=True); pathlib.Path(sys.argv[3]).write_bytes(r.stdout)' $taskFFmpeg '-L' "$taskStage/tools/ffmpeg-license.txt"
 if ($LASTEXITCODE -ne 0) { throw '保存 FFmpeg 许可信息失败' }

@@ -126,6 +126,36 @@ def finish(app, record):
     raise AssertionError('timeout')
 
 
+def test_shared_connection_defaults_to_global_and_keeps_relay_path(fixture):
+    app, service, _ = fixture
+    old = json.loads(service.path.read_text('utf-8'))
+    old.pop('use_shared', None)
+    relay.atomic_json(service.path, old)
+    shared = {'url': 'https://shared.example/dav/', 'username': 'shared-user',
+              'password_dpapi': relay.protect('shared-secret'), 'remote_path': 'backups'}
+    relay.atomic_json(app.data_dir / 'webdav.json', shared)
+    result = service.get()
+    assert result['use_shared'] and result['configured'] and result['remote_path'] == '中转'
+    assert result['url'] == shared['url'] and result['username'] == 'shared-user'
+    assert 'password_dpapi' not in result
+    service.save({'use_shared': True, 'remote_path': '共享/中转'})
+    saved = json.loads(service.path.read_text('utf-8'))
+    assert not any(k in saved for k in ('password_dpapi', 'url', 'username'))
+    before = service.config()['revision']
+    relay.atomic_json(app.data_dir / 'webdav.json', {**shared, 'password_dpapi': relay.protect('changed')})
+    assert service.config()['revision'] != before
+    with pytest.raises(ValueError, match='配置已变化'):
+        with service.remote(SimpleNamespace(params={'revision': before})):
+            pass
+
+
+def test_shared_missing_does_not_fallback_to_old_credentials(fixture):
+    _, service, _ = fixture
+    result = service.save({'use_shared': True, 'remote_path': 'inbox'})
+    assert not result['configured'] and not result['has_password'] and result['url'] == ''
+    assert result['remote_path'] == 'inbox'
+
+
 def test_background_upload_browse_download_unicode_zero_bytes(fixture, tmp_path):
     app, service, dav = fixture
     folder = tmp_path / '资料'; folder.mkdir()

@@ -98,11 +98,16 @@ def open_settings(job):
 
 
 def register(app):
-    from .memory_session import MemorySession
-    session = MemorySession()
+    from .memory_broker import PersistentMemoryCleaner
+    session = PersistentMemoryCleaner()
     app.memory_cleaner_close = session.close
     settings = MemorySettings(app)
     app.register('memory.status', lambda _: snapshot())
+    app.register('memory.helper.status', session.status)
+    app.jobs.register('memory.helper.install', lambda job: session.configure(job))
+    app.jobs.register('memory.helper.remove', lambda job: session.configure(job, remove=True))
+    app.register('memory.helper.install', lambda _: app.jobs.submit('memory.helper.install', {}))
+    app.register('memory.helper.remove', lambda _: app.jobs.submit('memory.helper.remove', {}))
     app.jobs.register('memory.clean', lambda job: clean(job, session))
     app.register('memory.clean', settings.submit)
     app.register('memory.settings.get', settings.get)

@@ -7,12 +7,12 @@ import { activeJob, Button, CheckField, dateText, Empty, Field, Notice, Section,
 import '../relay.css';
 
 interface Entry { path: string; name: string; directory: boolean; size: number; modified: number | null; etag: string }
-interface Config { url: string; username: string; remote_path: string; download_dir: string; has_password: boolean; configured: boolean; context_menu: { enabled: boolean; supported: boolean } }
+interface Config { url: string; username: string; remote_path: string; download_dir: string; has_password: boolean; configured: boolean; use_shared: boolean; shared_configured?: boolean; context_menu: { enabled: boolean; supported: boolean } }
 interface Plan { token: string; files: Entry[]; bytes: number; skipped: number; days: number }
 interface Result { path?: string; entries?: Entry[]; paths?: string[]; directory?: string; uploaded?: string[]; moved?: string[]; errors?: { path: string; message: string }[]; removed?: string[]; skipped?: string[]; message?: string }
 interface RelayJob extends Job { result?: Omit<Result, 'skipped'> & { skipped?: number | string[]; token?: string; files?: Entry[]; bytes?: number; days?: number } }
 const bytes = (n: number) => n < 1024 ? `${n} B` : n < 1024 ** 2 ? `${(n / 1024).toFixed(1)} KB` : n < 1024 ** 3 ? `${(n / 1024 ** 2).toFixed(1)} MB` : `${(n / 1024 ** 3).toFixed(2)} GB`;
-const initial: Config = { url: '', username: '', remote_path: '文件中转站', download_dir: '', has_password: false, configured: false, context_menu: { enabled: false, supported: false } };
+const initial: Config = { url: '', username: '', remote_path: '文件中转站', download_dir: '', has_password: false, configured: false, use_shared: true, context_menu: { enabled: false, supported: false } };
 function jobMessage(job: RelayJob) {
   if (job.status !== 'completed') return `${statusLabel(job.status)} · ${job.message || ''}`;
   if (job.result?.uploaded) return `上传 ${job.result.uploaded.length} 个文件${job.result.errors?.length ? `，${job.result.errors.length} 项未完成（查看详情）` : '，已完成'}`;
@@ -21,7 +21,7 @@ function jobMessage(job: RelayJob) {
 }
 
 export default function RelayPage() {
-  const { connected, jobs, run, track, error } = useApp();
+  const { connected, jobs, run, track, error, navigate } = useApp();
   const [config, setConfig] = useState(initial);
   const [password, setPassword] = useState('');
   const [settings, setSettings] = useState(false);
@@ -90,7 +90,7 @@ export default function RelayPage() {
   const saveConnection = async (test = false) => {
     setBusy(true);
     try {
-      const value = await run(() => rpc<Config>('relay.save', { url: config.url, username: config.username, remote_path: config.remote_path, download_dir: config.download_dir, password }));
+      const value = await run(() => rpc<Config>('relay.save', { use_shared: config.use_shared, ...(config.use_shared ? {} : { url: config.url, username: config.username, password }), remote_path: config.remote_path, download_dir: config.download_dir }));
       if (!value) return;
       setConfig(value); setPassword(''); setPlan(undefined); setEntries([]); setSelected([]); setPath(''); setReport('设置已保存');
       if (test) await submit('test');
@@ -191,13 +191,16 @@ export default function RelayPage() {
   </>;
   return <>
     <div className="relay-toolbar"><Button onClick={() => { setLogs(true); setReport(''); }}>上传日志{background.some(item => activeJob(item.status)) ? '（上传中）' : ''}</Button><Button onClick={() => setSettings(!settings)}><Settings2 size={16} />连接与右键菜单</Button><Button disabled={!config.download_dir} onClick={() => void run(() => native.open(config.download_dir))}>打开本机下载目录</Button></div>
-    {settings && <Section title="连接设置"><div className="form-grid">
-      <Field label="飞牛 WebDAV 地址" hint="填写飞牛提供的完整地址；外网使用 HTTPS。"><input value={config.url} placeholder="https://nas.example.com/dav/" onChange={e => setConfig({ ...config, url: e.target.value })} /></Field>
+    {settings && <Section title="中转设置">
+      <CheckField checked={config.use_shared} onChange={value => setConfig({ ...config, use_shared: value })} label="使用设置中的 WebDAV 连接" />
+      {config.use_shared && <p className="muted">{config.shared_configured ? '地址、账号和密码跟随全局设置，只需指定中转目录。' : '尚未配置全局 WebDAV 连接。'} <button className="inline-link" onClick={() => { sessionStorage.setItem('wintoolbox-settings-tab', 'data'); navigate('settings'); }}>管理 WebDAV 连接</button></p>}
+      <div className="form-grid">
+      {!config.use_shared && <Field label="WebDAV 地址"><input value={config.url} placeholder="https://nas.example.com/dav/" onChange={e => setConfig({ ...config, url: e.target.value })} /></Field>}
       <Field label="远端缓存目录" hint="相对于 WebDAV 地址，例如 shared/文件中转站。测试连接时创建最后一级目录。"><input value={config.remote_path} onChange={e => setConfig({ ...config, remote_path: e.target.value })} /></Field>
-      <Field label="用户名"><input autoComplete="username" value={config.username} onChange={e => setConfig({ ...config, username: e.target.value })} /></Field>
-      <Field label="密码" hint={config.has_password ? '已保存；留空保留原密码。更换地址或用户名需要重新填写。' : '仅在这台电脑加密保存。'}><input type="password" autoComplete="new-password" value={password} onChange={e => setPassword(e.target.value)} /></Field>
+      {!config.use_shared && <Field label="用户名"><input autoComplete="username" value={config.username} onChange={e => setConfig({ ...config, username: e.target.value })} /></Field>}
+      {!config.use_shared && <Field label="密码" hint={config.has_password ? '已保存；留空保留原密码。更换地址或用户名需要重新填写。' : '仅在这台电脑加密保存。'}><input type="password" autoComplete="new-password" value={password} onChange={e => setPassword(e.target.value)} /></Field>}
       <Field label="本机下载目录"><div className="button-row"><input value={config.download_dir} onChange={e => setConfig({ ...config, download_dir: e.target.value })} /><Button onClick={() => void run(async () => { const chosen = await native.directory(); if (chosen) setConfig({ ...config, download_dir: chosen }); })}>选择</Button></div></Field>
-    </div><div className="section-footer"><Button disabled={!connected || working} onClick={() => void saveConnection()}>保存设置</Button><Button variant="primary" disabled={!connected || working || !config.url.trim() || !config.username.trim() || !config.remote_path.trim()} onClick={() => void saveConnection(true)}>保存并测试连接</Button></div>
+    </div><div className="section-footer"><Button disabled={!connected || working} onClick={() => void saveConnection()}>保存设置</Button><Button variant="primary" disabled={!connected || working || !(config.use_shared ? config.shared_configured : config.url.trim() && config.username.trim()) || !config.remote_path.trim()} onClick={() => void saveConnection(true)}>保存并测试连接</Button></div>
       <div className="section-footer"><span className="muted">安装或首次启动自动添加菜单。右键 → 显示更多选项 → 发送到 → 文件中转站；也可使用独立的“发送到文件中转站”。</span><Button disabled={!config.context_menu.supported || working} onClick={() => void run(async () => { const menu = await rpc<Config['context_menu']>('relay.context_menu', { enabled: !config.context_menu.enabled }); setConfig({ ...config, context_menu: menu }); })}>{config.context_menu.enabled ? '移除右键菜单' : '添加右键菜单'}</Button></div>
     </Section>}
     <Section title="中转文件" action={<Button disabled={!config.configured || working} onClick={() => void list()}><RefreshCw size={16} />刷新</Button>}>

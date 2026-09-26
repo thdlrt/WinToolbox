@@ -228,6 +228,8 @@ fn main(){
       .plugin(tauri_plugin_global_shortcut::Builder::new().build())
       .invoke_handler(tauri::generate_handler![rpc,orb::set_orb,orb::orb_resize,orb::orb_save_position,orb::orb_action,drag_files,install_update,pick_files,pick_directory,pick_save,app_paths,open_path,open_external,save_course_file,set_overlay,get_captions_window,set_captions_window,set_captions_click_through])
       .setup(|app|{
+          let orb_handle=app.handle().clone();
+          tauri::async_runtime::spawn(async move{let _=orb::set_orb(orb_handle,true).await;});
           if let Some(main)=app.get_webview_window("main") {
               let handle=app.handle().clone();
               main.on_window_event(move|event|{

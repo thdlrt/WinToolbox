@@ -332,8 +332,20 @@ class Relay:
     def config(self):
         with self.lock:
             data = json.loads(self.path.read_text('utf-8')) if self.path.exists() else {}
-        return {'url': '', 'username': '', 'remote_path': '文件中转站',
-                'download_dir': str(Path.home() / 'Downloads' / '文件中转站'), **data}
+            shared_path = self.app.data_dir / 'webdav.json'
+            shared = json.loads(shared_path.read_text('utf-8')) if shared_path.exists() else {}
+        shared_ready = bool(shared.get('url') and shared.get('username') and shared.get('password_dpapi'))
+        use_shared = data.get('use_shared', shared_ready or not data.get('url'))
+        value = {'url': '', 'username': '', 'remote_path': '文件中转站',
+                 'download_dir': str(Path.home() / 'Downloads' / '文件中转站'), **data,
+                 'use_shared': use_shared, 'shared_configured': shared_ready}
+        if use_shared:
+            for key in ('url', 'username', 'password_dpapi'):
+                value[key] = shared.get(key, '')
+        # A queued operation must never follow a later global connection change.
+        value['revision'] = hashlib.sha256(json.dumps([value.get(k) for k in
+            ('url', 'username', 'password_dpapi', 'remote_path', 'download_dir', 'revision')], ensure_ascii=False).encode()).hexdigest()
+        return value
 
     def get(self, _=None):
         value = self.config()
@@ -347,17 +359,24 @@ class Relay:
         try:
             with self.lock:
                 old = self.config()
-                value = {**old, **{k: params[k] for k in ('url', 'username', 'remote_path', 'download_dir') if k in params}}
-                value['url'] = endpoint(value['url'])
+                value = {**old, **{k: params[k] for k in ('url', 'username', 'remote_path', 'download_dir', 'use_shared') if k in params}}
+                if 'use_shared' not in params and any(k in params for k in ('url', 'username', 'password')):
+                    value['use_shared'] = False  # Existing API clients explicitly saving their own connection.
+                if not isinstance(value['use_shared'], bool): raise ValueError('连接来源无效')
                 value['remote_path'] = relative(value['remote_path'].strip('/'), empty=False)
                 value['download_dir'] = str(safe_path(value['download_dir']))
-                if not isinstance(value['username'], str) or not value['username'].strip() or any(ord(c) < 32 for c in value['username']):
-                    raise ValueError('请填写有效用户名')
-                password = params.get('password', '')
-                if not isinstance(password, str): raise ValueError('密码应为文本')
-                if value['url'] != old['url'] or value['username'] != old['username'] or params.get('clear_password'):
-                    value.pop('password_dpapi', None)
-                if password: value['password_dpapi'] = protect(password)
+                if value['use_shared']:
+                    for key in ('url', 'username', 'password_dpapi'): value.pop(key, None)
+                else:
+                    value['url'] = endpoint(value['url'])
+                    if not isinstance(value['username'], str) or not value['username'].strip() or any(ord(c) < 32 for c in value['username']):
+                        raise ValueError('请填写有效用户名')
+                    password = params.get('password', '')
+                    if not isinstance(password, str): raise ValueError('密码应为文本')
+                    if value['url'] != old['url'] or value['username'] != old['username'] or params.get('clear_password'):
+                        value.pop('password_dpapi', None)
+                    if password: value['password_dpapi'] = protect(password)
+                value.pop('shared_configured', None)
                 value['revision'] = uuid.uuid4().hex
                 atomic_json(self.path, value)
                 self.plans.clear()
@@ -376,7 +395,7 @@ class Relay:
     @contextlib.contextmanager
     def remote(self, job):
         value = self.config()
-        if not value['url'] or not value.get('password_dpapi'): raise ValueError('请先在文件中转站保存 WebDAV 地址、用户名和密码')
+        if not value['url'] or not value.get('password_dpapi'): raise ValueError('请先在设置中配置 WebDAV 连接，再设置中转目录')
         if value.get('revision') != job.params.get('revision'): raise ValueError('连接配置已变化，请重新操作')
         remote = Remote(value)
         try: yield remote
