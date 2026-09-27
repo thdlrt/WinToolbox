@@ -269,9 +269,9 @@ def register(app):
 
     def model_spec(voice):
         values = app.settings.get()
-        if values.get('preferences', {}).get('model_mode') == 'local':
-            raise ValueError('生成口语练习请在设置中选择 API 模式；已保存练习仍可离线播放')
         role = values['roles'].get('tts', {})
+        if role.get('provider_id') == 'local':
+            raise ValueError('本地 CosyVoice 用于媒体参考音色配音；口语练习请配置云端语音合成模型，已保存练习可离线播放')
         provider = next((p for p in values['providers'] if p['id'] == role.get('provider_id')), None)
         if not provider or not role.get('model'):
             raise ValueError('请在设置中配置语音合成模型')

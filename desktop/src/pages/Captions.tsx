@@ -80,7 +80,7 @@ export default function CaptionsPage() {
     finally { setDeviceBusy(false); }
   };
   useEffect(() => { if (connected) void loadDevices(); }, [connected]);
-  const config = modelConfig(settings);
+  const config = modelConfig(settings, 'live_asr');
   const previewState = { ...state, options: { ...state.options, font_size: fontSize, background_opacity: opacity } };
   return <div className="captions-workspace">
     <Section>

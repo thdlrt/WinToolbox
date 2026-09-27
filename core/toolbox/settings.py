@@ -51,6 +51,16 @@ def protect(value, decrypt=False):
 
 
 class Settings:
+    @staticmethod
+    def model_presets():
+        provider = next(row for row in DEFAULTS['providers'] if row['kind'] == 'dashscope')
+        return [{
+            'id': 'bailian', 'name': '阿里云预设', 'kind': 'dashscope',
+            'provider': {key: provider[key] for key in ('name', 'kind', 'base_url', 'region')},
+            'models': {**BAILIAN_MODELS, 'parcel': BAILIAN_MODELS['chat'],
+                       'parcel_vision': BAILIAN_MODELS['vision']},
+        }]
+
     def __init__(self, data_dir):
         self.path = Path(data_dir) / "settings.json"
         self.secret_path = Path(data_dir) / "secrets.json"
@@ -61,7 +71,12 @@ class Settings:
         with self.lock:
             self.value = copy.deepcopy(DEFAULTS)
             if self.path.exists():
-                self._merge(self.value, json.loads(self.path.read_text("utf-8")))
+                saved = json.loads(self.path.read_text("utf-8"))
+                self._merge(self.value, saved)
+                # Persisted role maps are authoritative; AI config imports can
+                # intentionally remove roles belonging to a different device.
+                if 'roles' in saved:
+                    self.value['roles'] = copy.deepcopy(saved['roles'])
             self.secrets = json.loads(self.secret_path.read_text("utf-8")) if self.secret_path.exists() else {}
 
     @staticmethod

@@ -67,9 +67,9 @@ def _atomic_json(path, value):
 
 def _role(app, role):
     settings = app.settings.get()
-    if settings.get("preferences", {}).get("model_mode") == "local":
-        raise ValueError("当前为本地模式，不会调用云端语音服务。请使用本地识别。")
     selected = settings.get("roles", {}).get(role, {})
+    if selected.get('provider_id') == 'local':
+        raise ValueError("此功能选择了本地模型，请使用本地识别；不会回退云端语音服务。")
     provider = next((p for p in settings.get("providers", []) if p["id"] == selected.get("provider_id")), None)
     if not provider:
         raise ValueError(f"请先在模型设置中配置 {role} 服务。")

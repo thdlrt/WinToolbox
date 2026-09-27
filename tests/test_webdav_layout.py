@@ -28,7 +28,7 @@ def test_shared_layout_fixed_paths_and_private_override_ignored(fixture):
     app, service, _ = fixture
     paths = service_paths({'remote_path': '团队/工具箱'})
     assert paths == {'config_backups': '团队/工具箱/config-backups/windows', 'ledger': '团队/工具箱/ledger-v1',
-                     'relay': '团队/工具箱/file-relay', 'project_memory': '团队/工具箱/project-memory'}
+                     'relay': '团队/工具箱/file-relay', 'project_memory': '团队/工具箱/project-memory', 'ai_config': '团队/工具箱/ai-config'}
     current = service.config()
     service.save({'url': 'https://ignored.invalid/', 'remote_path': 'ignored', 'password': 'ignored', 'use_shared': False})
     assert service.config()['url'] == current['url'] and service.config()['remote_path'] == current['remote_path']

@@ -63,6 +63,8 @@ export const toolLabel = (value: string) =>
     "network.run": "网络诊断",
     "webdav.upload": "上传 WebDAV 快照",
     "webdav.restore": "恢复 WebDAV 快照",
+    "ai.config.upload": "上传 AI 配置",
+    "ai.config.download": "下载与应用 AI 配置",
     "backups.export": "导出备份",
     "backups.import": "恢复备份",
     backup_export: "导出备份",

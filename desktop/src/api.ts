@@ -65,6 +65,6 @@ export interface Job {
 export interface Collection { id: string; name: string; prompt?: string; document_count?: number; index_ready?: boolean; index_status?: string }
 export interface Citation { path?: string; page?: number; text?: string; title?: string; name?: string; document?: string; source?: string; [key: string]: unknown }
 export interface Subtitle { id: string; start: number; end: number; text: string; translation?: string; speaker?: string }
-export interface LocalModel { id: string; name: string; engine: string; installed: boolean; size_hint?: string; description?: string }
+export interface LocalModel { id: string; name: string; engine: string; installed: boolean; ollama_model?: string; size_hint?: string; description?: string }
 export interface PluginField { name: string; label?: string; type?: string; required?: boolean; default?: unknown; options?: (string | { value: string; label?: string })[]; description?: string }
 export interface Plugin { id: string; name: string; version: string; description?: string; enabled?: boolean; permissions?: string[]; ui?: { fields?: PluginField[] }; manifest?: Partial<Plugin> }

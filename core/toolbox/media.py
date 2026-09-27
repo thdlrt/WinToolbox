@@ -192,7 +192,7 @@ def summarize(app,job,segments,mode="general",prompt=""):
 def _role_signature(app, roles):
     settings=app.settings.get()
     pids={settings["roles"].get(r,{}).get("provider_id") for r in roles}
-    return {"roles":{r:settings["roles"].get(r,{}) for r in roles},"mode":settings.get("preferences",{}).get("model_mode"),"preset":settings.get("preferences",{}).get("local_preset"),"providers":[{k:v for k,v in p.items() if k!="has_key"} for p in settings["providers"] if p["id"] in pids]}
+    return {"roles":{r:settings["roles"].get(r,{}) for r in roles},"providers":[{k:v for k,v in p.items() if k!="has_key"} for p in settings["providers"] if p["id"] in pids]}
 
 
 def process_media(app,job):

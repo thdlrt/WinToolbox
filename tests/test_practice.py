@@ -88,7 +88,7 @@ def test_duplicate_jobs_do_not_double_bill_and_paths_are_checked(app):
 
 def test_local_mode_can_replay_but_cannot_send_to_api(app):
     item = finish(app, app.call('practice.generate', {'text': 'Hello.'}))
-    app.settings.update({'preferences': {'model_mode': 'local'}})
+    app.settings.update({'roles': {'tts': {'provider_id': 'local', 'model': 'cosyvoice'}}})
     assert app.call('practice.audio', {'id': item['sentences'][0]['audio_id']})['data']
     job = app.call('practice.generate', {'text': 'Something new.'})
     for _ in range(100):

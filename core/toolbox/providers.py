@@ -48,17 +48,15 @@ class Providers:
     def resolve(self, role="chat", provider_id=None, model=None):
         values = self.settings.get()
         selected = values["roles"].get(role, {})
-        if values.get("preferences", {}).get("model_mode") == "local":
-            if provider_id not in (None, "local"):
-                raise ProviderError("本地模式不会调用云端服务；请先切换到 API 模式")
+        provider_id = provider_id or selected.get("provider_id")
+        if provider_id == "local":
             if role not in ("chat", "translate", "vision", "embedding"):
-                raise ProviderError("本地模式请使用本地转写或 CosyVoice 配音；不会回退到云端 API")
-            if selected.get("provider_id") != "local" or not selected.get("model"):
-                raise ProviderError("本地预设配置不完整，请在设置中重新应用本地预设")
+                raise ProviderError("该功能不能通过此接口执行本地模型；本地转写和 CosyVoice 配音请使用对应功能，不会回退云端")
+            if not (model or selected.get("model")):
+                raise ProviderError("请在功能模型设置中选择本地模型")
             if self.local_llm is None:
                 raise ProviderError("本地模型运行服务不可用，请重新启动工具箱")
             return {"id": "local", "kind": "local", "name": "本地模型"}, model or selected["model"], ""
-        provider_id = provider_id or selected.get("provider_id")
         provider = next((p for p in values["providers"] if p["id"] == provider_id), None)
         if not provider:
             raise ProviderError(f"请在设置中为 {role} 选择供应商")

@@ -11,6 +11,7 @@ children; do not expose per-service connection or remote-directory controls.
 | `ledger-v1/ops`, `ledger-v1/blobs` | Existing immutable ledger/network-profile merge sync |
 | `file-relay` | Shared file inbox |
 | `project-memory` | Existing immutable project memory sync |
+| `ai-config/config-v1.json` | Manual encrypted AI model/key sharing between PC and Android |
 
 Create service child directories automatically. The parent of the selected shared
 root must exist; never treat an unrelated relay folder as the shared root.

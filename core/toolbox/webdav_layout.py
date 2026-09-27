@@ -8,7 +8,7 @@ from urllib.parse import quote
 from .settings import atomic_json
 
 SERVICES = {'config_backups': 'config-backups/windows', 'ledger': 'ledger-v1',
-            'relay': 'file-relay', 'project_memory': 'project-memory'}
+            'relay': 'file-relay', 'project_memory': 'project-memory', 'ai_config': 'ai-config'}
 MIGRATION_LOCK = threading.RLock()
 
 

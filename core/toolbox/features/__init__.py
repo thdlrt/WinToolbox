@@ -16,6 +16,8 @@ def register_all(app):
 
     from . import network
     network.register(app)
+    from . import ai_config_sync
+    ai_config_sync.register(app)
 
     from .. import project_memory_curation, project_memory_export, project_memory_principles
     project_memory_curation.register(app, app.project_memory)

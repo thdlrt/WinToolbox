@@ -24,7 +24,7 @@ function Sources({ sources }: { sources: Citation[] }) {
 
 export default function LivePage({ overlay = false }: { overlay?: boolean }) {
   const { connected, run, error, settings, navigate, track } = useApp();
-  const config = modelConfig(settings);
+  const config = modelConfig(settings, 'live_asr');
   const [devices, setDevices] = useState<Device[]>([]);
   const [collections, setCollections] = useState<Collection[]>([]);
   const [collectionId, setCollectionId] = useState('');

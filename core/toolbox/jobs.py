@@ -150,6 +150,8 @@ class Jobs:
             self.gpu_lock.release()
 
     def submit(self, tool, params, runner=None):
+        if tool.startswith('ai.config.') and (set(params) != {'request_token'} or not isinstance(params.get('request_token'), str)):
+            raise ValueError('AI 配置同步请使用专用接口，密钥和连接参数不得写入任务记录')
         if tool.startswith('relay.') and any(key in params for key in ('password', 'password_dpapi', 'username', 'url', 'authorization')):
             raise ValueError('中转站凭据只能通过 relay.save 保存，不得写入任务记录')
         if tool.startswith("fnconnect.") and any(k in params for k in ("password", "cookie", "secret", "authorization")):

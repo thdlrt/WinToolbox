@@ -450,7 +450,7 @@ class Relay:
                 else:
                     excluded = []
                     shared_directory = destination.directory.removesuffix('file-relay/')
-                    for child in ('file-relay/', 'ledger-v1/', 'project-memory/', 'config-backups/'):
+                    for child in ('file-relay/', 'ledger-v1/', 'project-memory/', 'config-backups/', 'ai-config/'):
                         owned = shared_directory + child
                         if owned.startswith(source.directory):
                             excluded.append(unquote(owned[len(source.directory):]).strip('/'))

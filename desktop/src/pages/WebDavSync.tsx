@@ -6,6 +6,7 @@ import { activeJob, Button, CheckField, dateText, Empty, Field, Modal, Notice, P
 import { emptyWebDavDraft, webdavBackupPasswordValid, webdavConnectionParams, webdavDirty, type WebDavConnection, type WebDavDraft, type WebDavSnapshot, webdavSnapshotKey } from '../webdavState';
 import '../webdav.css';
 import WebDavDataSync from './WebDavDataSync';
+import AiConfigSync from './AiConfigSync';
 
 interface WebDavList { snapshots: WebDavSnapshot[]; remote_path: string }
 interface WebDavResult { name?: string; ok?: boolean; message?: string; restart_recommended?: boolean; recovery_path?: string; warnings?: string[] }
@@ -138,6 +139,7 @@ export default function WebDavSync() {
     {progressJob && activeJob(progressJob.status) && <div className="webdav-progress"><span>{progressJob.message || '正在处理配置备份…'}</span><Button variant="ghost" busy={cancelling} disabled={!connected || progressJob.status === 'cancelling'} onClick={cancelSync}>取消</Button><Progress value={progressJob.progress || 0} /></div>}
     {failure && <Notice tone="warning"><span className="webdav-message">{failure}</span></Notice>}
     {message && <Notice tone="success"><span className="webdav-message">{message}</span>{restart && <p>请重启工具箱以加载恢复的配置。</p>}{recoveryPath && <button className="inline-link" onClick={() => void native.open(recoveryPath).catch(report)}><FolderOpen size={13} />打开恢复前备份</button>}</Notice>}
+    <AiConfigSync usable={usable} key={`${saved?.url}|${saved?.username}|${saved?.remote_path}`} />
     <div className="tab-bar"><button className={mode === 'sync' ? 'active' : ''} onClick={() => setMode('sync')}>数据自动同步</button><button className={mode === 'backup' ? 'active' : ''} onClick={() => setMode('backup')}>配置备份与恢复</button></div>
     {mode === 'sync' ? <Section><WebDavDataSync connection={saved} /></Section> : <Section className="webdav-sync">
     <p className="small-note">手动保存和恢复此电脑的应用设置。记账、文件与项目记忆通过数据同步功能处理。</p>

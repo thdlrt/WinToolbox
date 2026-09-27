@@ -17,6 +17,7 @@ def app(tmp_path):
         "model_mode": "local", "local_preset": "light", "asr_engine": "faster-whisper",
         "asr_model": "faster-whisper-small", "asr_device": "cpu", "asr_compute_type": "int8",
     }})
+    instance.settings.update({'roles': {role: {'provider_id': 'local', 'model': 'faster-whisper-small'} for role in ('transcribe', 'live_asr')} | {'tts': {'provider_id': 'local', 'model': 'cosyvoice'}}})
     yield instance
     instance.close()
 
@@ -78,7 +79,7 @@ def test_live_stale_api_form_uses_local_preset(app, monkeypatch):
         session.start()
         assert selected == [("faster-whisper-small", "faster-whisper")]
         assert session.params["device"] == "cpu" and session.params["compute_type"] == "int8"
-        with pytest.raises(ValueError, match="本地模式"):
+        with pytest.raises(ValueError, match="本地"):
             _role(app, "live_asr")
     finally:
         session.stop()
@@ -100,6 +101,7 @@ def test_worker_receives_preset_compute_type(app, tmp_path, monkeypatch):
 def test_switch_to_bailian_discards_old_local_model(app):
     from toolbox.processing_mode import processing_params
     app.settings.update({"preferences": {"model_mode": "bailian"}})
+    app.settings.update({'roles': {'transcribe': {'provider_id': 'dashscope', 'model': 'qwen-audio-3.0-asr-flash'}, 'tts': {'provider_id': 'dashscope', 'model': 'qwen3-tts-flash'}}})
     actual = processing_params(app, {"engine": "faster-whisper", "model": "faster-whisper-small", "device": "cpu", "compute_type": "int8"})
     assert actual["engine"] == "api" and actual["tts_provider"] == "qwen"
     assert not {"model", "device", "compute_type"}.intersection(actual)

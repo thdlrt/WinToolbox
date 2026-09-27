@@ -10,6 +10,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "core"))
 from toolbox.live import CaptionSession, CloudASR, LiveSession, LocalASR, register
 from toolbox.settings import Settings
+from toolbox.models import CATALOG
 
 
 def eventually(condition, timeout=2):
@@ -33,7 +34,7 @@ def app(tmp_path, monkeypatch):
         return "这是译文"
     instance = SimpleNamespace(data_dir=tmp_path, settings=settings,
         jobs=SimpleNamespace(register=lambda *a: None, gpu_lock=threading.Lock()),
-        models=SimpleNamespace(require=lambda *a, **kw: {}), providers=SimpleNamespace(chat=chat),
+        models=SimpleNamespace(require=lambda *a, **kw: {}, identify=lambda model: next(row for row in CATALOG if row['id'] == model)), providers=SimpleNamespace(chat=chat),
         emit=lambda type, **value: events.append({"type": type, **value}),
         register=lambda method, handler: handlers.update({method: handler}),
         call=lambda method, params=None: handlers[method](params or {}),
@@ -193,6 +194,7 @@ def test_configuration_persists_and_invalid_values_are_rejected(app):
 
 
 def test_local_preset_routes_capture_to_local_asr(app):
+    app.settings.update({'roles': {'live_asr': {'provider_id': 'local', 'model': 'faster-whisper-small'}}})
     app.settings.update({"preferences": {"model_mode": "local", "asr_model": "faster-whisper-small", "asr_engine": "faster-whisper", "asr_device": "cpu", "asr_compute_type": "int8"}})
     app.call("captions.start", {"engine": "api", "model": "stale-cloud"})
     s = app.live_holder["session"]
@@ -307,6 +309,7 @@ def test_target_language_change_discards_late_translation_for_previous_language(
 
 
 def test_source_language_persists_routes_local_and_cannot_change_while_active(app):
+    app.settings.update({'roles': {'live_asr': {'provider_id': 'local', 'model': 'faster-whisper-small'}}})
     app.settings.update({'preferences': {'model_mode': 'local', 'asr_engine': 'faster-whisper', 'asr_model': 'faster-whisper-small'}})
     configured = app.call('captions.configure', {'source_language': 'en', 'target_language': 'zh'})
     assert configured['options']['source_language'] == 'en'

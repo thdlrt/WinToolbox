@@ -34,6 +34,7 @@ class App:
         self.register("app.info", lambda p: {"name":"WinToolbox","version":__version__,"data_dir":str(self.data_dir),"ffmpeg":os.getenv("WINTOOLBOX_FFMPEG") or shutil.which("ffmpeg"),"platform":platform.platform()})
         self.register("app.prepare_exit", lambda p: self.prepare_exit())
         self.register("settings.get", lambda p: self.settings.get())
+        self.register("settings.model_presets", lambda p: self.settings.model_presets())
         self.register("settings.update", lambda p: self.settings.update(p.get("settings", p)))
         self.register("setup.get", lambda p: self.model_setup.get())
         self.register("setup.apply", self.model_setup.apply)

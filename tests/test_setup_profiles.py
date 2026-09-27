@@ -28,6 +28,37 @@ def test_hardware_recommendation_does_not_assume_large_ram_means_gpu():
     assert recommended_preset({}) == "light"
 
 
+def test_model_presets_are_read_only_and_reuse_default_models(app, monkeypatch):
+    from toolbox.settings import BAILIAN_MODELS, DEFAULTS
+
+    def unexpected(*args, **kwargs):
+        raise AssertionError('Listing model presets must not detect hardware or apply setup')
+
+    monkeypatch.setattr('toolbox.setup.detect_hardware', unexpected)
+    monkeypatch.setattr(app.model_setup, 'apply', unexpected)
+    app.settings.update({'preferences': {'model_mode': 'local'}, 'providers': [{
+        'id': 'existing', 'kind': 'dashscope', 'name': 'International',
+        'region': 'intl', 'base_url': 'https://example.invalid/v1', 'api_key': 'fixture-key',
+    }]})
+    before = app.settings.get()
+    files = (app.settings.path.read_bytes(), app.settings.secret_path.read_bytes())
+    presets = app.call('settings.model_presets')
+    assert len(presets) == 1
+    preset = presets[0]
+    assert preset['id'] == 'bailian' and preset['kind'] == 'dashscope'
+    assert preset['models'] == {**BAILIAN_MODELS, 'parcel': BAILIAN_MODELS['chat'],
+                                'parcel_vision': BAILIAN_MODELS['vision']}
+    assert preset['provider'] == {key: DEFAULTS['providers'][0][key]
+                                  for key in ('name', 'kind', 'base_url', 'region')}
+    assert app.settings.get() == before
+    assert (app.settings.path.read_bytes(), app.settings.secret_path.read_bytes()) == files
+    assert 'fixture-key' not in json.dumps(presets)
+    preset['models']['chat'] = 'changed-by-caller'
+    preset['provider']['region'] = 'changed-by-caller'
+    assert app.call('settings.model_presets')[0]['models']['chat'] == BAILIAN_MODELS['chat']
+    assert app.call('settings.model_presets')[0]['provider']['region'] == 'cn'
+
+
 def test_setup_get_is_read_only_and_never_exposes_key(app):
     state = app.call("setup.get")
     assert state["mode"] == "bailian" and state["preset"] == "light"
@@ -129,7 +160,7 @@ def test_local_inference_uses_runtime_and_never_cloud_even_on_failure(app, monke
     assert app.providers.chat([{"role": "user", "content": "hello"}], role="vision") == "local answer"
     assert calls[-1]["model"] == "qwen3.5:0.8b"
     assert app.providers.embed(["hello"]) == [[1.0, 0.0]]
-    with pytest.raises(ProviderError, match="云端"):
+    with pytest.raises(ProviderError, match="密钥"):
         app.providers.chat([], provider_id="dashscope")
     with pytest.raises(ProviderError, match="本地"):
         app.providers.transcribe("does-not-exist.wav", duration=1)
