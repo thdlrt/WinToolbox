@@ -123,3 +123,57 @@ def test_download_verifies_before_offering_install(tmp_path,monkeypatch,corrupt)
         result=runners['updates.download'](job)
         assert result['ready']
         assert (Path(result['folder'])/'stage/core/toolbox/__main__.py').is_file()
+
+@pytest.mark.parametrize('exit_code', [0, 1, 2])
+def test_installed_update_overwrites_original_path_and_restarts_only_on_success(tmp_path, exit_code):
+    root = tmp_path / "用户's installed app"
+    root.mkdir()
+    exe = root / 'WinToolbox.exe'
+    exe.write_bytes(b'original program')
+    data = tmp_path / 'user data'
+    data.mkdir()
+    (data / 'settings.json').write_text('preserved settings')
+    folder = data / 'updates' / 'fixture'
+    folder.mkdir(parents=True)
+    package = folder / "new setup.exe"
+    package.write_bytes(b'installer fixture')
+    script = Path(general.install_script(folder, exe, False, 999999999, package))
+    events = folder / 'events.jsonl'
+    # Exercise the real generated PowerShell control flow with an installer double.
+    # It records arguments, reports an exit code and simulates program replacement.
+    harness = f'''$fixtureEvents = {general.psquote(events)}
+$fixtureExe = {general.psquote(exe)}
+function Start-Process {{
+ param($FilePath,$ArgumentList,[switch]$Wait,[switch]$PassThru,$WorkingDirectory)
+ @{{path=$FilePath;arguments=$ArgumentList;wait=[bool]$Wait;passThru=[bool]$PassThru;directory=$WorkingDirectory}} | ConvertTo-Json -Compress | Add-Content -LiteralPath $fixtureEvents -Encoding utf8
+ if ($PassThru) {{
+  if ({exit_code} -eq 0) {{ [IO.File]::WriteAllText($fixtureExe,'updated program') }}
+  return [PSCustomObject]@{{ExitCode={exit_code}}}
+ }}
+}}
+'''
+    text = script.read_text('utf-8-sig')
+    # Error UI is interactive in production; capture its effect through the log here.
+    text = text.replace(' Add-Type -AssemblyName System.Windows.Forms', '')
+    text = text.replace(' [System.Windows.Forms.MessageBox]::Show($taskFailure, "WinToolbox 更新", "OK", "Error") | Out-Null', '')
+    script.write_text(harness + text, 'utf-8-sig')
+    result = subprocess.run(['powershell.exe', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', str(script)], capture_output=True, timeout=30)
+    records = [json.loads(line) for line in events.read_text('utf-8-sig').splitlines()]
+    install = records[0]
+    assert install['path'] == str(package)
+    assert install['arguments'] == '/UPDATE /P /D=' + str(root)
+    assert install['wait'] and install['passThru']
+    assert (data / 'settings.json').read_text() == 'preserved settings'
+    message = (folder / 'install-result.txt').read_text('utf-8-sig')
+    if exit_code == 0:
+        assert result.returncode == 0, result.stderr
+        assert exe.read_text() == 'updated program'
+        assert len(records) == 2
+        assert records[1]['path'] == str(exe)
+        assert records[1]['directory'] == str(root)
+        assert '更新完成' in message
+    else:
+        assert result.returncode == 1
+        assert len(records) == 1, 'Failed or cancelled installer must not launch the app'
+        assert exe.read_bytes() == b'original program'
+        assert str(exit_code) in message and '更新完成' not in message

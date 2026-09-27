@@ -164,14 +164,13 @@ export default function GeneralSettings() {
               disabled={working}
               onClick={() => setConfirm(true)}
             >
-              {download!.result!.portable ? "重启并更新" : "退出并安装"}
+              重启并更新
             </Button>
           </Notice>
         )}
         <p className="muted">
           从 thdlrt/WinToolbox 的 GitHub
-          正式发布获取更新，不会自动安装。免安装版更新保留 data
-          中的设置、模型和记录。
+          正式发布获取更新，不会自动安装。更新直接覆盖程序文件，无需卸载；保留设置、模型和记录。
         </p>
       </Section>
       {confirm && (
@@ -181,7 +180,7 @@ export default function GeneralSettings() {
               保存当前工作后继续。工具箱将退出，
               {download?.result?.portable
                 ? "更新程序文件并重新打开。"
-                : "打开新版安装程序。"}
+                : "在原目录覆盖更新，完成后重新打开，无需卸载旧版。"}
               后台任务需先完成或停止。
             </p>
             <div className="modal-footer">

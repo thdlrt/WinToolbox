@@ -136,7 +136,19 @@ def install_script(folder, exe, portable, pid, package):
              f'$taskBackup = {psquote(backup)}', f'$taskExe = {psquote(exe)}',
              f'$taskLog = {psquote(folder / "install-result.txt")}']
     if not portable:
-        lines += [f'Start-Process -FilePath {psquote(package)}', "'安装程序已打开' | Set-Content -LiteralPath $taskLog -Encoding utf8"]
+        # Tauri's NSIS /UPDATE skips the uninstall branch; /P skips maintenance
+        # pages. NSIS requires /D last, without quotes, even for paths with spaces.
+        lines += ['try {',
+                  f' $taskInstaller = Start-Process -FilePath {psquote(package)} -ArgumentList ("/UPDATE /P /D=" + $taskRoot) -Wait -PassThru',
+                  ' if ($taskInstaller.ExitCode -ne 0) { throw ("安装更新失败，退出码：" + $taskInstaller.ExitCode) }',
+                  " '更新完成' | Set-Content -LiteralPath $taskLog -Encoding utf8",
+                  ' Start-Process -FilePath $taskExe -WorkingDirectory $taskRoot',
+                  '} catch {',
+                  ' $taskFailure = $_.Exception.Message',
+                  ' $taskFailure | Set-Content -LiteralPath $taskLog -Encoding utf8',
+                  ' Add-Type -AssemblyName System.Windows.Forms',
+                  ' [System.Windows.Forms.MessageBox]::Show($taskFailure, "WinToolbox 更新", "OK", "Error") | Out-Null',
+                  ' exit 1', '}']
     else:
         lines += ["$taskParts = @('WinToolbox.exe','portable.flag','python','core','tools','docs','使用说明.md')",
                   'New-Item -ItemType Directory -Path $taskBackup -Force | Out-Null',
