@@ -46,8 +46,7 @@ def test_model_presets_are_read_only_and_reuse_default_models(app, monkeypatch):
     assert len(presets) == 1
     preset = presets[0]
     assert preset['id'] == 'bailian' and preset['kind'] == 'dashscope'
-    assert preset['models'] == {**BAILIAN_MODELS, 'parcel': BAILIAN_MODELS['chat'],
-                                'parcel_vision': BAILIAN_MODELS['vision']}
+    assert preset['models'] == BAILIAN_MODELS
     assert preset['provider'] == {key: DEFAULTS['providers'][0][key]
                                   for key in ('name', 'kind', 'base_url', 'region')}
     assert app.settings.get() == before

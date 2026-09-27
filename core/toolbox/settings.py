@@ -57,8 +57,7 @@ class Settings:
         return [{
             'id': 'bailian', 'name': '阿里云预设', 'kind': 'dashscope',
             'provider': {key: provider[key] for key in ('name', 'kind', 'base_url', 'region')},
-            'models': {**BAILIAN_MODELS, 'parcel': BAILIAN_MODELS['chat'],
-                       'parcel_vision': BAILIAN_MODELS['vision']},
+            'models': dict(BAILIAN_MODELS),
         }]
 
     def __init__(self, data_dir):
