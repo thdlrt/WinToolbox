@@ -6,6 +6,20 @@ if ($PortableOnly -and -not $StageOnly) {
     if ($taskRunning) { throw '请先退出正在运行的 WinToolbox，再更新免安装版。' }
 }
 $taskVersion = (Get-Content -LiteralPath "$taskRoot/desktop/src-tauri/tauri.conf.json" -Raw | ConvertFrom-Json).version
+function Move-RetiredMemoryTool([string]$taskTools, [switch]$AllowBusy) {
+    $taskSource = [IO.Path]::GetFullPath((Join-Path $taskTools 'memreduct'))
+    $taskWorkspace = [IO.Path]::GetFullPath($taskRoot).TrimEnd('\') + '\'
+    $taskBackup = [IO.Path]::GetFullPath((Join-Path $taskRoot ('.build/retired-components/memreduct-' + [Guid]::NewGuid().ToString('N'))))
+    if (-not $taskSource.StartsWith($taskWorkspace, [StringComparison]::OrdinalIgnoreCase) -or -not $taskBackup.StartsWith($taskWorkspace, [StringComparison]::OrdinalIgnoreCase)) { throw 'Unexpected retired component path' }
+    if (Test-Path -LiteralPath $taskSource) {
+        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $taskBackup) | Out-Null
+        try { Move-Item -LiteralPath $taskSource -Destination $taskBackup -ErrorAction Stop }
+        catch {
+            if (-not $AllowBusy) { throw }
+            Write-Warning '旧 Mem Reduct 文件被占用，暂时保留；工具箱已不再调用它。退出旧程序后，下次更新会自动归档。'
+        }
+    }
+}
 function Move-ObsoletePackageMetadata([string]$taskSitePackages) {
     if (-not (Test-Path -LiteralPath $taskSitePackages)) { return }
     foreach ($taskMetadata in (Get-ChildItem -LiteralPath $taskSitePackages -Directory -Filter 'wintoolbox_core-*.dist-info')) {
@@ -49,8 +63,7 @@ Copy-Item -LiteralPath $taskUv -Destination "$taskStage/tools/uv.exe" -Force
 if ($LASTEXITCODE -ne 0) { throw "准备 FN Connect 核心失败" }
 & $taskPython "$PSScriptRoot/prepare_adb.py"
 if ($LASTEXITCODE -ne 0) { throw '准备 ADB 运行环境失败' }
-& $taskPython "$PSScriptRoot/prepare_memreduct.py"
-if ($LASTEXITCODE -ne 0) { throw '准备 Mem Reduct 失败' }
+Move-RetiredMemoryTool "$taskStage/tools"
 & "$PSScriptRoot/prepare_memory_cleaner.ps1"
 Copy-Item -LiteralPath "$taskRoot/docs/THIRD_PARTY.md" -Destination "$taskStage/tools/THIRD_PARTY.md" -Force
 & $taskPython -c 'import pathlib,subprocess,sys; r=subprocess.run([sys.argv[1],sys.argv[2]],stdout=subprocess.PIPE,stderr=subprocess.STDOUT,check=True); pathlib.Path(sys.argv[3]).write_bytes(r.stdout)' $taskFFmpeg '-L' "$taskStage/tools/ffmpeg-license.txt"
@@ -72,6 +85,7 @@ $taskPortable = Join-Path $taskDist 'WinToolbox-portable'
 New-Item -ItemType Directory -Path $taskPortable -Force | Out-Null
 Copy-Item -LiteralPath "$taskRoot/desktop/src-tauri/target/release/wintoolbox.exe" -Destination "$taskPortable/WinToolbox.exe" -Force
 foreach ($taskPart in @('python','core','tools')) { robocopy "$taskStage/$taskPart" "$taskPortable/$taskPart" /E /NFL /NDL /NJH /NJS /NP | Out-Null; if ($LASTEXITCODE -gt 7) { throw "便携文件复制失败：$taskPart" } }
+Move-RetiredMemoryTool "$taskPortable/tools" -AllowBusy
 Move-ObsoletePackageMetadata "$taskPortable/python/Lib/site-packages"
 Set-Content -LiteralPath "$taskPortable/portable.flag" -Value 'WinToolbox portable data mode' -Encoding utf8
 Copy-Item -LiteralPath "$taskRoot/README.md" -Destination "$taskPortable/使用说明.md" -Force

@@ -84,3 +84,51 @@ def test_read_only_status_and_explicit_removal():
     assert client.configure(job)['installed']
     assert not client.configure(job, remove=True)['installed']
     assert broker.elevations == ['--install', '--uninstall']
+
+@pytest.mark.parametrize('source,expected', [
+    (r'\\?\C:\工具箱\tools\cleaner.exe', r'C:\工具箱\tools\cleaner.exe'),
+    (r'\\?\UNC\server\share\cleaner.exe', r'\\server\share\cleaner.exe'),
+    (r'C:\plain\cleaner.exe', r'C:\plain\cleaner.exe'),
+])
+def test_framework_launch_normalizes_extended_paths(source, expected, monkeypatch):
+    from toolbox.features import memory_broker as module
+    calls = []
+    def run(args, **kwargs):
+        calls.append(args)
+        return SimpleNamespace(returncode=0, stdout='{"ok":true}', stderr='')
+    monkeypatch.setattr(module.subprocess, 'run', run)
+    assert module.invoke(source, '--identity')['ok']
+    assert calls == [[expected, '--identity']]
+
+
+def test_framework_crash_reports_exit_and_logs_diagnostics(monkeypatch, caplog):
+    from toolbox.features import memory_broker as module
+    monkeypatch.setattr(module.subprocess, 'run', lambda *a, **k: SimpleNamespace(
+        returncode=-532462766, stdout='', stderr='System.ArgumentException: invalid configuration path'))
+    with pytest.raises(ValueError, match='退出码 -532462766'):
+        module.invoke('cleaner.exe', '--identity')
+    assert 'System.ArgumentException' in caplog.text
+    assert '--identity' in caplog.text
+
+
+def test_automatic_cleanup_never_installs_even_if_component_disappeared():
+    broker = Broker()
+    with pytest.raises(ValueError, match='自动清理已跳过'):
+        broker.client().clean('default', lambda *a: None, allow_install=False)
+    assert not broker.elevations and not broker.calls
+    broker.installed = broker.present = True
+    assert broker.client().clean('default', lambda *a: None, allow_install=False)['operations'] == [2, 5]
+
+
+def test_memory_scheduler_lifecycle_excludes_fixture_apps_and_stops_before_exit(tmp_path):
+    from toolbox.app import App
+    app = App(tmp_path, register_live=False)
+    try:
+        assert app.memory_automation.thread is None
+        app.memory_cleaner_start()
+        assert app.memory_automation.thread.is_alive()
+        app.prepare_exit()
+        assert app.memory_automation.stop.is_set()
+        assert not app.memory_automation.thread.is_alive()
+    finally:
+        app.close()

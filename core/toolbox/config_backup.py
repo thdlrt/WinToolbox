@@ -55,8 +55,9 @@ def validate_config(name, value):
     elif name == 'orb-settings.json':
         from .features.orb_settings import OrbSettings
         OrbSettings.validate(value.get('actions'))
-    elif name == 'memory-cleaner.json' and value.get('mode') not in ('default', 'full'):
-        raise ValueError('内存清理配置格式无效')
+    elif name == 'memory-cleaner.json':
+        from .features.system_memory import validate_settings
+        validate_settings(value)
     elif name == 'fnconnect-tun.json' and type(value.get('enabled')) is not bool:
         raise ValueError('VPN 配置格式无效')
 

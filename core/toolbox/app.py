@@ -71,6 +71,8 @@ class App:
         register_document_runtime(self)
         if hasattr(self, "ledger_auto_sync"):
             self.ledger_auto_sync()
+        if register_live and hasattr(self, "memory_cleaner_start"):
+            self.memory_cleaner_start()
 
     def register(self, name, handler):
         if name in self.handlers:
@@ -162,6 +164,8 @@ class App:
         self.providers.client.close()
 
     def prepare_exit(self):
+        if hasattr(self, "memory_cleaner_close"):
+            self.memory_cleaner_close()
         if hasattr(self, "ledger_close"):
             self.ledger_close()
         if hasattr(self, "filesync"):

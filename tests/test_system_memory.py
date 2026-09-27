@@ -96,21 +96,20 @@ def test_unrelated_local_connection_cannot_supply_cleanup_result():
     assert not threads[0].is_alive()
 
 
-def test_modified_memreduct_is_not_executed(tmp_path, monkeypatch):
-    executable = tmp_path / 'memreduct/memreduct.exe'
-    executable.parent.mkdir(); executable.write_bytes(b'not upstream')
-    monkeypatch.setenv('WINTOOLBOX_TOOLS', str(tmp_path))
-    with pytest.raises(ValueError, match='校验失败'): memory.executable()
+def test_memory_settings_are_builtin_without_external_executable():
+    assert not hasattr(memory, 'executable')
+    assert not hasattr(memory, '_launch')
 
 
 def test_preferences_persist_and_are_snapshotted_for_orb_and_page(tmp_path):
     jobs = SimpleNamespace(submit=lambda name, params: {'tool': name, 'params': params})
     service = memory.MemorySettings(SimpleNamespace(data_dir=tmp_path, jobs=jobs))
-    assert service.get() == {'mode': 'default'}
+    assert service.get()['mode'] == 'default'
+    assert service.get()['auto_enabled'] is False
     service.save({'mode': 'full'})
     task = service.submit({})
     assert task == {'tool': 'memory.clean', 'params': {'mode': 'full'}}
     with pytest.raises(ValueError): service.save({'mode': 'full -unexpected'})
     service.save({'mode': 'default'})
     assert task['params']['mode'] == 'full'
-    assert memory.MemorySettings(service.app).get() == {'mode': 'default'}
+    assert memory.MemorySettings(service.app).get()['mode'] == 'default'

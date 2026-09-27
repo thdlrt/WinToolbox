@@ -5,7 +5,7 @@ import { isDesktop } from '../api';
 import { cx, Empty, Go } from '../ui';
 
 const tools: { id: Page; name: string; icon: typeof AudioLines; tags: string[] }[] = [
-  { id: 'ram', name: '内存清理', icon: Boxes, tags: ['内存', 'Mem Reduct', '清理', 'RAM', '自动清理'] },
+  { id: 'ram', name: '内存清理', icon: Boxes, tags: ['内存', '清理', 'RAM', '自动清理', '定时'] },
   { id: 'relay', name: '文件中转站', icon: FolderSync, tags: ['飞牛', 'WebDAV', '上传', '下载', '跨电脑', '缓存'] },
   { id: 'filesync', name: '文件同步', icon: FolderSync, tags: ['FileSync', '双向同步', '备份', '文件夹', '笔记'] },
   { id: 'memory', name: '项目记忆', icon: Boxes, tags: ['知识', '任务', '项目', 'SSH', 'WebDAV', '多设备'] },

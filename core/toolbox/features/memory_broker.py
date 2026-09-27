@@ -3,6 +3,8 @@ import ctypes
 from ctypes import wintypes as w
 import hashlib
 import json
+import logging
+import ntpath
 import os
 from pathlib import Path
 import re
@@ -10,6 +12,20 @@ import subprocess
 import threading
 
 from .memory_worker import commands
+
+log = logging.getLogger(__name__)
+
+
+def launch_path(path):
+    """.NET Framework cannot initialize from a Win32 extended-length path."""
+    value = os.fspath(path)
+    if value.lower().startswith('\\\\?\\unc\\'):
+        return '\\\\' + value[8:]
+    if value.startswith('\\\\?\\'):
+        value = value[4:]
+        if not re.match(r'^[A-Za-z]:\\', value):
+            raise ValueError('内存清理组件需要普通 Windows 驱动器或 UNC 路径')
+    return value
 
 
 def executable():
@@ -25,16 +41,27 @@ def executable():
 
 
 def invoke(path, *arguments):
-    result = subprocess.run([str(path), *arguments], capture_output=True, text=True, encoding='utf-8',
-                            errors='replace', timeout=115, creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+    command = [launch_path(path), *arguments]
+    try:
+        result = subprocess.run(command, capture_output=True, text=True, encoding='utf-8',
+                                errors='replace', timeout=115, creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+    except (OSError, subprocess.TimeoutExpired) as error:
+        log.exception('Memory cleaner launch failed: action=%s path=%s', arguments[:1], command[0])
+        raise ValueError(f'内存清理组件启动失败：{error}；详情见后端日志') from error
+    def failure():
+        log.error('Memory cleaner response failure: action=%s exit=%s stdout=%r stderr=%r',
+                  arguments[:1], result.returncode, result.stdout[:4000], result.stderr[:4000])
     try:
         value = json.loads(result.stdout)
     except (ValueError, TypeError):
-        raise ValueError('无法读取内存清理组件的响应，请在内存设置中修复组件') from None
+        failure()
+        raise ValueError(f'内存清理组件未返回有效响应（退出码 {result.returncode}），详情见后端日志') from None
     if not isinstance(value, dict) or not value.get('ok'):
+        failure()
         raise ValueError(value.get('error', '内存清理未完成') if isinstance(value, dict) else '清理响应无效')
     if result.returncode != 0:
-        raise ValueError('内存清理组件未正常退出')
+        failure()
+        raise ValueError(f'内存清理组件未正常退出（退出码 {result.returncode}），详情见后端日志')
     return value
 
 
@@ -53,8 +80,8 @@ def elevate(path, action, sid):
     kernel.GetExitCodeProcess.argtypes = [w.HANDLE, ctypes.POINTER(w.DWORD)]
     kernel.CloseHandle.argtypes = [w.HANDLE]
     info = Execute(); info.size = ctypes.sizeof(info); info.mask = 0x40 | 0x100
-    info.verb = 'runas'; info.file = str(path); info.parameters = subprocess.list2cmdline([action, sid])
-    info.directory = str(path.parent); info.show = 0
+    info.verb = 'runas'; info.file = launch_path(path); info.parameters = subprocess.list2cmdline([action, sid])
+    info.directory = ntpath.dirname(info.file); info.show = 0
     if not shell.ShellExecuteExW(ctypes.byref(info)):
         code = ctypes.get_last_error()
         if code == 1223: raise ValueError('已取消组件安装授权，未执行清理；下次可重新启用')
@@ -103,13 +130,15 @@ class PersistentMemoryCleaner:
             return self.status()
         finally: self.lock.release()
 
-    def clean(self, mode, progress):
+    def clean(self, mode, progress, allow_install=True):
         expected = list(commands(mode))
         if not self.lock.acquire(blocking=False): raise ValueError('内存清理正在进行，请稍候')
         try:
             path, sid = self.identity()
             status = self.runner(path, '--status', sid)
             if not status.get('installed'):
+                if not allow_install:
+                    raise ValueError('自动清理已跳过：请先在内存清理设置中启用清理组件')
                 if status.get('present'):
                     raise ValueError('清理组件已安装但不可用，请在内存清理设置中点击修复；不会自动重复申请权限')
                 self._install(path, sid, progress)

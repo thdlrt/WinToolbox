@@ -7,12 +7,12 @@ import { acceptExpenseUpdate, attachmentKinds, changeExpenseType, emptyExpenseFi
 import '../expenses.css';
 import LedgerSync from '../LedgerSync';
 import ExpenseProjects from '../ExpenseProjects';
-import ToolJobs from '../ToolJobs';
 import { legacyExpenseProject, type ExpenseProject } from '../expensesState';
 
 interface MonthResult { month: string | null; start_month: string; end_month: string; summary_scope: string; settlement_mode?: 'general' | 'half'; items: ExpenseEntry[]; summary: ExpenseSummary[]; categories: string[]; queryKey?: string }
 interface Transition { proceed: () => void; cancel?: () => void }
 type AttachJob = Job & { result?: { id: string; entry: ExpenseEntry } };
+type ExportJob = Job & { result?: { path?: string; rows?: number } };
 const completed = (status: string) => ['completed', 'succeeded', 'success'].includes(status);
 
 export default function ExpensesPage() {
@@ -45,6 +45,9 @@ export default function ExpensesPage() {
   const dirty = editing && expenseDirty(draft, base);
   const current = useRef({ period, filters, item, draft, dirty, busy, editing }); current.current = { period, filters, item, draft, dirty, busy, editing };
   const attachJobs = jobs.filter(job => job.tool === 'expenses.attach') as AttachJob[];
+  const latestExport = jobs.filter(job => job.tool === 'expenses.export').sort((a, b) => b.created_at.localeCompare(a.created_at))[0] as ExportJob | undefined;
+  const exportPath = latestExport?.artifacts?.[0]?.path || latestExport?.result?.path;
+  const exportRunning = !!latestExport && activeJob(latestExport.status);
   const running = item && attachJobs.find(job => activeJob(job.status) && (job.params.id === item.id || requests.current.get(job.id) === item.id));
   const locked = !!busy || !!running;
   const report = useCallback((reason: unknown) => { if (mounted.current) setFailure(errorText(reason)); }, []);
@@ -192,7 +195,10 @@ export default function ExpensesPage() {
   const categories = [...new Set(['AI订阅', '其他报销', '其他', '转账收入', ...(visibleData?.categories || [])])];
   return <div className="expenses-page">
     <LedgerSync onSynced={onSynced} />
-    <div className="expenses-project-toolbar"><Field label="项目"><select aria-label="筛选项目" value={filters.project_id || 'all'} onChange={event => changeFilter({ project_id: event.target.value })}><option value="all">全部项目</option>{projects.map(project => <option key={project.id} value={project.id}>{project.name}{project.archived ? '（已归档）' : ''}</option>)}</select></Field><Button disabled={!connected} onClick={() => setManageProjects(true)}>管理项目</Button><span className="flex-spacer" /><select aria-label="导出格式" value={exportFormat} onChange={event => setExportFormat(event.target.value)}><option value="xlsx">Excel (.xlsx)</option><option value="csv">CSV</option></select><Button busy={exporting} disabled={!connected || !periodValid} onClick={exportLedger}>导出所选区间</Button></div>
+    <div className="expenses-project-toolbar"><Field label="项目"><select aria-label="筛选项目" value={filters.project_id || 'all'} onChange={event => changeFilter({ project_id: event.target.value })}><option value="all">全部项目</option>{projects.map(project => <option key={project.id} value={project.id}>{project.name}{project.archived ? '（已归档）' : ''}</option>)}</select></Field><Button disabled={!connected} onClick={() => setManageProjects(true)}>管理项目</Button><span className="flex-spacer" /><select aria-label="导出格式" value={exportFormat} onChange={event => setExportFormat(event.target.value)}><option value="xlsx">Excel (.xlsx)</option><option value="csv">CSV</option></select><Button busy={exporting} disabled={!connected || !periodValid || exportRunning} onClick={exportLedger}>导出所选区间</Button></div>
+    {latestExport && <div className="expenses-export" aria-live="polite">
+      {exportRunning ? <><span>{latestExport.message || '正在导出表格…'}</span><Progress value={latestExport.progress} /></> : completed(latestExport.status) ? <><span>表格已导出{latestExport.result?.rows !== undefined ? ` · ${latestExport.result.rows} 条` : ''}</span>{exportPath && <Button variant="ghost" disabled={!connected} onClick={() => void native.open(exportPath).catch(report)}>打开表格</Button>}</> : <Notice tone="warning">{latestExport.status === 'failed' ? `导出失败：${errorText(latestExport.error || latestExport.message || '请重试。')}` : latestExport.status === 'interrupted' ? '导出已中断，可重新导出。' : '导出已取消。'}</Notice>}
+    </div>}
     <div className="expenses-toolbar"><div className="expenses-period"><Field label="起始日期"><input type="date" aria-label="起始日期" value={period.start_date || ''} onChange={event => changePeriod({ start_date: event.target.value })} /></Field><span>至</span><Field label="结束日期"><input type="date" aria-label="结束日期" value={period.end_date || ''} onChange={event => changePeriod({ end_date: event.target.value })} /></Field><Button variant="ghost" onClick={() => changePeriod(monthPeriod())}>本月</Button></div><div><IconButton label="刷新记账" disabled={!connected || loading || !periodValid} onClick={() => void load().catch(report)}><RefreshCw size={16} /></IconButton><Button variant="primary" disabled={!connected || !periodValid || selectedProject?.archived} onClick={() => void open()}><Plus size={16} />新增条目</Button></div></div>
     {!periodValid && <Notice tone="warning">请选择有效的起止日期，结束日期不能早于起始日期。</Notice>}
     {failure && !editing && !transition && !deleting && <Notice tone="warning">{failure}</Notice>}
@@ -209,7 +215,6 @@ export default function ExpensesPage() {
       {failure && <Notice tone="warning">{failure}</Notice>}
       <div className="modal-footer expenses-editor-footer">{item && <Button variant="ghost" disabled={locked} onClick={() => { const reload = () => void open(item); if (dirty) setTransition({ proceed: reload }); else reload(); }}>重新载入</Button>}{item && <Button variant="ghost" disabled={locked} onClick={() => setDeleting('entry')}><Trash2 size={14} />删除条目</Button>}<span className="flex-spacer" />{dirty && <small>未保存</small>}<Button disabled={!!busy} onClick={closeEditor}>关闭</Button><Button variant="primary" disabled={!connected || locked || (!dirty && !!item)} busy={busy === 'save'} onClick={save}><Save size={14} />保存</Button></div>
     </div></Modal>}
-    <ToolJobs scope="expenses" title="同步与导出任务" />
     {manageProjects && <ExpenseProjects projects={projects} onChanged={async () => { await loadProjects(); await load(); }} onClose={() => setManageProjects(false)} />}
     {transition && <Modal title="保存修改？" onClose={closeTransition}><div className="modal-body"><p>当前条目有未保存的修改。</p>{failure && <Notice tone="warning">{failure}</Notice>}<div className="modal-footer"><Button disabled={!!busy} onClick={closeTransition}>继续编辑</Button><Button disabled={!!busy} onClick={discard}>不保存</Button><Button variant="primary" disabled={locked} busy={busy === 'save'} onClick={saveAndContinue}>保存并继续</Button></div></div></Modal>}
     {deleting && <Modal title={deleting === 'entry' ? '删除条目？' : '删除附件？'} onClose={closeDelete}><div className="modal-body"><p className="break-word">{deleting === 'entry' ? `删除“${item?.title}”及其附件。` : `从此条目移除“${deleting.original_name}”，原始文件不受影响。`}</p>{failure && <Notice tone="warning">{failure}</Notice>}<div className="modal-footer"><Button disabled={!!busy} onClick={closeDelete}>取消</Button><Button variant="danger" busy={busy === 'delete'} onClick={remove}>确认删除</Button></div></div></Modal>}
