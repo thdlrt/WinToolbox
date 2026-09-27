@@ -94,3 +94,31 @@ def test_legacy_ai_configuration_is_available_in_backup_list(pair):
     args = {'name': 'config-v1.json', 'location': 'legacy_ai'}
     preview = target.call('webdav.preview', args)
     finish(target, target.call('webdav.restore', {**args, 'preview_token': preview['token']}))
+
+def test_connection_cannot_change_between_preview_check_and_restore(pair, monkeypatch):
+    import threading
+    source, target, _ = pair
+    source.settings.update({'preferences': {'restore_fixture': 'applied'}})
+    uploaded = finish(source, source.call('webdav.upload'))['result']
+    args = {'name': uploaded['name'], 'location': 'unified'}
+    preview = target.call('webdav.preview', args)
+    original = snapshots.restore
+    attempted, acquired = threading.Event(), threading.Event()
+    workers = []
+    def wrapped(app, payload, job, revision):
+        def change_connection():
+            attempted.set()
+            with app.data_lock:
+                acquired.set()
+                app.call('webdav.save', {'remote_path': 'AfterRestore'})
+        worker = threading.Thread(target=change_connection)
+        workers.append(worker);worker.start()
+        assert attempted.wait(1)
+        assert not acquired.wait(.1), 'Connection changed after validation but before applying the preview'
+        return original(app, payload, job, revision)
+    monkeypatch.setattr(snapshots, 'restore', wrapped)
+    finish(target, target.call('webdav.restore', {**args, 'preview_token': preview['token']}))
+    for worker in workers: worker.join(2)
+    assert acquired.is_set()
+    assert target.settings.value['preferences']['restore_fixture'] == 'applied'
+    assert target.call('webdav.get')['remote_path'] == 'AfterRestore'

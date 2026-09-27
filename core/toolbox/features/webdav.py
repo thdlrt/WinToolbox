@@ -404,9 +404,10 @@ def register(app):
             if 'preview' in saved:
                 from .. import config_snapshots
                 item = saved['preview']
-                if identity(require_config()) != item['identity']:
-                    raise ValueError('WebDAV 连接已变化，请重新预览')
-                return config_snapshots.restore(app, item['payload'], job, item['revision'])
+                with app.data_lock:
+                    if identity(require_config()) != item['identity']:
+                        raise ValueError('WebDAV 连接已变化，请重新预览')
+                    return config_snapshots.restore(app, item['payload'], job, item['revision'])
             snapshot_name(name)
             with tempfile.TemporaryDirectory(prefix='.webdav-download-', dir=app.data_dir.parent) as directory:
                 source = Path(directory) / name
