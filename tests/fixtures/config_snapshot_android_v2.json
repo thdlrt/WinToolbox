@@ -1,0 +1,55 @@
+{
+  "password": "fixture-安卓-password",
+  "envelope": {
+    "ciphertext": "+be0SZa2K2XRQ1pdQNtyz2QHRPIbv+4vzfSWrwSdcyYNbWvMzunKC5g3x/yLOYRnhvFhi+UfxQEwKiwj7+6E3z8YIHtXpsSNHV9xPXqoe1zfqI79j2SXL/BQXWG0Hcawjt1Fr/ZoKx+xPXHHTRyq0l5uCzvPUhXFz7IJDNqZc3KgrHB5wgYlqm1mAdYg788Lleai5aFmmt4dmzrqTiHqkL3rSzA1j+1mKbG8TZM7ftxtCArFyDhz1XSFCu+1oYSBQ05geQnyhhx/NFe3oInqdfuwh1yJ3tEbe71HkNrsnJf2QM5ozphk1S5zUJo9DZJBeA+n3s3vljEicVbcSMuNvrA8hNFPVhx2SQvU3q/pI8791gfTgtZMiS0giHmbJlWQUTNPMyjmhdxLzF/Y0qHhNkGHs6YJdKVvTA8KV3L1rvxq1wuqK/OgQN5GAF4gtJZiepgGJJjmkwzUdgVtyzX51oKRlvENGFeKaxnIxEav2OhTCWDiXebmY/AcCJtdez2TE2JXCmIRYV16H7e/MK2M1UoaUw0uZdUdFAwFV8Em7SdjSDNmzjfYVXpaL2ClRGgQTl+t4zdQszgvVMBXefJTkUwdeAXWE4rU2UR6eFmbpYJhvBIwrd8et51LtxG1qX0ZohtgOhRmcZ9y1eQ9vuqfUm3Js5o+zcfvSYW5z5o6ze5HNH3dHmj58a0JSmCFstFC+eKBwolhh8pKx8O0LXcOPuQzB9dY8S3r+4PQPGnX8LlKl2mUj6Nfy6gVzoGFPwy29D7+j+vbg2hG64cuCOf7gQp8jnK15CWzvj6SbVdF/D5EI70m4Cl0ToT+tpGWGsGszhrjrRRmGSn2B5TLgRBtoMea3i2sA1ay7w4tYOE7iNJ1FVoosP+UqwPeAHUG4p0Rms/QABIJydLNV/IuSaSUOQTcqIsdCruI",
+    "salt": "AAECAwQFBgcICQoLDA0ODw==",
+    "format": "wintoolbox-config-backup-encrypted",
+    "version": 2,
+    "nonce": "EBESExQVFhcYGRob"
+  },
+  "payload": {
+    "format": "wintoolbox-config-backup",
+    "ai": {
+      "roles": {"chat": {
+        "provider_id": "fixture",
+        "model": "fixture-text"
+      }},
+      "format": "wintoolbox-ai-config",
+      "version": 1,
+      "secrets": {"fixture": "fixture-key"},
+      "providers": [{
+        "kind": "openai",
+        "name": "测试供应商",
+        "base_url": "https://fixture.invalid/v1",
+        "id": "fixture"
+      }]
+    },
+    "created_at": 1790488800,
+    "version": 2,
+    "config": {
+      "schema": 1,
+      "excluded": [
+        "passwords",
+        "keystore",
+        "webdav_connection",
+        "ledger",
+        "files",
+        "caches",
+        "logs"
+      ],
+      "preferences": {
+        "nas": {
+          "origin": "https://nas.invalid",
+          "scope": "lan",
+          "username": "sample-user"
+        },
+        "home": {"favorite.ledger": true}
+      },
+      "app_version": "0.6.1",
+      "scope": "config",
+      "created_at": 1790488800,
+      "platform": "android"
+    },
+    "platform": "android"
+  }
+}

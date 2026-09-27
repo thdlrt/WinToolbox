@@ -1,0 +1,46 @@
+{
+  "password": "fixture-sync-password",
+  "payload": {
+    "format": "wintoolbox-config-backup",
+    "version": 2,
+    "platform": "windows",
+    "created_at": 1790488800,
+    "config": {
+      "settings.json": {
+        "providers": [],
+        "roles": {},
+        "preferences": {
+          "theme": "dark"
+        }
+      }
+    },
+    "ai": {
+      "format": "wintoolbox-ai-config",
+      "version": 1,
+      "providers": [
+        {
+          "id": "fixture",
+          "name": "测试供应商",
+          "kind": "openai",
+          "base_url": "https://fixture.invalid/v1"
+        }
+      ],
+      "roles": {
+        "chat": {
+          "provider_id": "fixture",
+          "model": "fixture-text"
+        }
+      },
+      "secrets": {
+        "fixture": "fixture-key"
+      }
+    }
+  },
+  "envelope": {
+    "format": "wintoolbox-config-backup-encrypted",
+    "version": 2,
+    "salt": "AAECAwQFBgcICQoLDA0ODw==",
+    "nonce": "AAECAwQFBgcICQoL",
+    "ciphertext": "MhlpAR46n2nvjDCGCyaW1BNIlAgDTW0EOi34zShsl0BZA72K3vdGIa9OOi1eE6RWDsfxZLolPpjYPPHbOrpBOyOfjiM8Ej9shCVgfNIYHAuSbQ5DlZaHO2jR07l3JfeAk12Drp9wUPTmDzek18w1z3uFdoCdMwQR70RNudSSsgiXFjO/542F7qjjWG+19iTO8jOJbRK7F2r55Er2ozMNaJCptXcGI7Ex1pU33MUmdtKZw7Wht+1yJ5n8ZMx5xALCee4KkMiwAxRHQQ2zCgUR8wVBApHe/kiG1VBqZM5BLy9DX2lwW+vfP4Um3nMdmoEK2LIWamj1p3AXq5vwNwdSmx1TAku5qVDUojj0ROlU4S47ywIX9RVkJ84Cqf/PuGQ2ExnkCwPD+DA1Vw0ggBz5eHtA1rFNndFZlb/Rch0Bq7+qAvCOcuXMt7j0PBMcayBMma0OFS+1NqkXDiN7zG8pjcYeyvPHwt1Ppe/qGIw+E6dKKCMavd4KAvUD4pe9G3QzWpEVnRRZuyKOxesqXHiKxRMEIZzfKkYKNdNm8KexkAicehaOTjWruVXbRye8cK2Omzo9+ix42048xWgH0DyEvusMe+wgeA3PMJcGP9w="
+  }
+}

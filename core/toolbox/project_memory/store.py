@@ -54,6 +54,7 @@ class MemoryStore:
         self.root.mkdir(parents=True, exist_ok=True)
         self.device_id = device_id or machine_device_id()
         self.lock = threading.RLock()
+        self.on_change = lambda: None
         self.db = sqlite3.connect(self.root / "memory.sqlite3", check_same_thread=False)
         self.db.row_factory = sqlite3.Row
         if self.db.execute("PRAGMA user_version").fetchone()[0] > 1:
@@ -240,6 +241,7 @@ class MemoryStore:
                   "scope": data["scope"], "project_id": data.get("project_id", entity_id if entity_type == "project" else None),
                   "data": data, "created_at": datetime.now(timezone.utc).isoformat()}
             self.db.execute("INSERT INTO operations VALUES(?,?,?,?)", (op["op_id"], entity_id, entity_type, _json(op)))
+        self.on_change()
         return self._view(entity_id)
 
     def create_project(self, name, project_id=None):

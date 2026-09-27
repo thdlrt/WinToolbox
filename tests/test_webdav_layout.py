@@ -27,7 +27,7 @@ def stop_auto(*apps):
 def test_shared_layout_fixed_paths_and_private_override_ignored(fixture):
     app, service, _ = fixture
     paths = service_paths({'remote_path': '团队/工具箱'})
-    assert paths == {'config_backups': '团队/工具箱/config-backups/windows', 'ledger': '团队/工具箱/ledger-v1',
+    assert paths == {'configuration': '团队/工具箱/config-backups/shared', 'config_backups': '团队/工具箱/config-backups/windows', 'ledger': '团队/工具箱/ledger-v1',
                      'relay': '团队/工具箱/file-relay', 'project_memory': '团队/工具箱/project-memory', 'ai_config': '团队/工具箱/ai-config'}
     current = service.config()
     service.save({'url': 'https://ignored.invalid/', 'remote_path': 'ignored', 'password': 'ignored', 'use_shared': False})
@@ -169,12 +169,13 @@ def test_configuration_restore_never_replaces_ledger_or_connection(pair):
     files_before = {p.relative_to(target.data_dir / 'expenses').as_posix(): p.read_bytes() for p in (target.data_dir / 'expenses').rglob('*') if p.is_file()}
     connection = (target.data_dir / 'webdav.json').read_bytes()
     uploaded = finish(source, source.call('webdav.upload'))['result']
-    body = state['files']['/dav/重要文件/sync/WinToolbox/config-backups/windows/' + uploaded['name']]
+    body = state['files']['/dav/重要文件/sync/WinToolbox/config-backups/shared/' + uploaded['name']]
     assert uploaded['scope'] == 'config'
-    import io
-    with zipfile.ZipFile(io.BytesIO(body)) as archive:
-        assert not any(name.startswith(('expenses/', 'project-memory/', 'media/')) for name in archive.namelist())
-    finish(target, target.call('webdav.restore', {'name': uploaded['name']}))
+    from toolbox.config_snapshots import decrypt
+    payload = decrypt(json.loads(body), 'fixture-dav-password')
+    assert not any(name.startswith(('expenses/', 'project-memory/', 'media/')) for name in payload['config'])
+    preview = target.call('webdav.preview', {'name': uploaded['name'], 'location': 'unified'})
+    finish(target, target.call('webdav.restore', {'name': uploaded['name'], 'location': 'unified', 'preview_token': preview['token']}))
     assert target.settings.get()['preferences']['theme'] == 'dark'
     assert (target.data_dir / 'webdav.json').read_bytes() == connection
     assert target.call('expenses.get', {'id': entry['id']})['title'] == 'keep receipt'

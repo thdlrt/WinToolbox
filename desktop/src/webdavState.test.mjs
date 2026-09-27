@@ -1,5 +1,5 @@
 import { strict as assert } from 'node:assert';
-import { emptyWebDavDraft, webdavConnectionParams, webdavBackupPasswordValid, webdavDirty, webdavSnapshotKey } from './webdavState.ts';
+import { emptyWebDavDraft, webdavConnectionParams, webdavBackupPasswordValid, webdavDirty, webdavSnapshotKey, webdavLegacyPasswordRequired, webdavRestoreParams } from './webdavState.ts';
 import { migratedUiPreferences, validFavorites, validTheme } from './uiPreferences.ts';
 
 const saved = { url: 'https://dav.example.com', remote_path: '重要文件/sync/WinToolbox', username: 'demo', has_password: true };
@@ -36,3 +36,12 @@ assert.equal(validTheme('unexpected'), false);
 assert.equal(validFavorites(['media']), true);
 assert.equal(validFavorites([1]), false);
 console.log('WebDAV/preferences: 28 assertions passed; no network or credential access.');
+
+const unified={name:'config-android-fixture.wtconfig.json',location:'unified',kind:'unified',source_platform:'android',encrypted:true};
+assert.equal(webdavLegacyPasswordRequired(unified),false);
+assert.deepEqual(webdavRestoreParams(unified,'ignored-old-password'),{name:unified.name,location:'unified'});
+assert.equal(webdavLegacyPasswordRequired({name:'config-v1.json',kind:'legacy_ai',encrypted:true}),false);
+assert.deepEqual(webdavRestoreParams({name:'old.wtbak',location:'legacy_root',encrypted:true},'old-password'),{name:'old.wtbak',location:'legacy_root',backup_password:'old-password'});
+assert.equal(webdavLegacyPasswordRequired({name:'old.zip',encrypted:false}),false);
+assert.notEqual(webdavSnapshotKey({name:'same',path:'root/android/same'}),webdavSnapshotKey({name:'same',path:'root/windows/same'}));
+console.log('PASS unified backup uses connection password; legacy encrypted backups retain old-password restore');

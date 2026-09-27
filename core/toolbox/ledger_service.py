@@ -44,12 +44,12 @@ def write_xlsx(path, rows):
 
 
 def register_service(app, ledger, materialize, listing, text_field, expense_lock):
-    stop, wake = threading.Event(), threading.Event()
+    from .data_sync import ensure_manager
+    manager = ensure_manager(app)
     sync_lock, state_lock = threading.Lock(), threading.RLock()
     state_path = ledger.root / 'ledger' / 'sync-state.json'
     state = json.loads(state_path.read_text('utf-8')) if state_path.exists() else {}
     state.update(syncing=False)
-    worker = None
     paused = False
 
     def config():
@@ -166,32 +166,12 @@ def register_service(app, ledger, materialize, listing, text_field, expense_lock
     def submit(_=None):
         return app.jobs.submit('expenses.sync', {})
 
-    def loop():
-        while not stop.is_set():
-            wake.wait(60)
-            wake.clear()
-            if stop.is_set():
-                break
-            try:
-                if not paused and not getattr(app, 'maintenance', False) and configured() and not status()['syncing']:
-                    submit()
-            except Exception:
-                # Offline configuration and shutdown races are retried on next wake.
-                pass
-
     def start():
-        nonlocal worker
-        with state_lock:
-            if worker is None:
-                worker = threading.Thread(target=loop, name='ledger-auto-sync', daemon=True)
-                worker.start()
-        wake.set()
+        manager.start()
+        manager.request('ledger')
 
     def close():
-        stop.set()
-        wake.set()
-        if worker is not None:
-            worker.join(timeout=2)
+        manager.stop_worker()
 
     def before_restore():
         nonlocal paused
@@ -208,7 +188,7 @@ def register_service(app, ledger, materialize, listing, text_field, expense_lock
             state.clear()
             state['syncing'] = False
         paused = False
-        wake.set()
+        manager.request('ledger')
 
     def export_job(job):
         with getattr(app, 'data_lock', contextlib.nullcontext()), expense_lock:
@@ -241,12 +221,13 @@ def register_service(app, ledger, materialize, listing, text_field, expense_lock
         listing(params)  # Validate project/date inputs before queuing.
         return app.jobs.submit('expenses.export', {**params, 'format': params.get('format', 'xlsx')})
 
-    ledger.on_change = wake.set
+    manager.register('ledger', '记账与网络诊断配置', configured, sync_job)
+    ledger.on_change = lambda: manager.request('ledger', immediate=False)
     app.ledger_auto_sync = start
     app.ledger_close = close
     app.ledger_before_restore = before_restore
     app.ledger_after_restore = after_restore
-    app.jobs.register('expenses.sync', sync_job)
+    app.jobs.register('expenses.sync', lambda job: manager.run('ledger', job))
     app.jobs.register('expenses.export', export_job)
     for name, handler in (('projects.list', projects), ('projects.save', project_save),
                           ('sync.status', status), ('sync', submit), ('export', export),

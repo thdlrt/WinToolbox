@@ -65,3 +65,18 @@ export function expenseSettlement(value: string) {
   return { kind: 'due', label: '还需转入', amount: expenseMoney(clean.replace(/^\+/, '')) } as const;
 }
 export function acceptExpenseUpdate(current: ExpenseEntry | undefined, update: ExpenseEntry) { return !!current && current.id === update.id && update.revision >= current.revision; }
+
+export interface PendingExpenseAttachment { path: string; kind: AttachmentKind }
+export function recentExpensePeriod(months: number, now = new Date()): ExpensePeriod {
+  const start = localDate(new Date(now.getFullYear(), now.getMonth() - months + 1, 1));
+  const end = localDate(now);
+  return { start_month: start.slice(0, 7), end_month: end.slice(0, 7), start_date: start, end_date: end };
+}
+export function pendingExpenseAttachments(existing: PendingExpenseAttachment[], paths: string[], kind: AttachmentKind) {
+  const next = [...existing];
+  const key = (path: string) => path.replace(/\\/g, '/').toLocaleLowerCase();
+  const seen = new Set(existing.map(item => key(item.path)));
+  for (const path of paths) if (!seen.has(key(path))) { next.push({ path, kind }); seen.add(key(path)); }
+  return next;
+}
+export function attachmentFileName(path: string) { return path.split(/[\\/]/).pop() || path; }

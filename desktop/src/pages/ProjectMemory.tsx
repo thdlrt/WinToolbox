@@ -21,7 +21,6 @@ import {
 } from "../ui";
 import {
   Plus,
-  RefreshCw,
   Settings2,
   MoreHorizontal,
   Search,
@@ -107,12 +106,10 @@ export default function ProjectMemoryPage() {
     track,
     error,
     success,
-    navigate,
     setBeforeNavigate,
   } = useApp();
   const [view, setView] = useState<"board" | "library">("board");
   const [actionId, setActionId] = useState("");
-  const [syncConfigured, setSyncConfigured] = useState(false);
   const finishedActions = useRef(new Set<string>());
   const [syncTab, setSyncTab] = useState("webdav");
   const [previewBody, setPreviewBody] = useState(false);
@@ -149,7 +146,6 @@ export default function ProjectMemoryPage() {
     [sshProjects, setSshProjects] = useState<string[]>([]),
     [sshBindingProject, setSshBindingProject] = useState("");
   const [syncError, setSyncError] = useState(""),
-    [autoSync, setAutoSync] = useState(false),
     [curation, setCuration] = useState<Curation>({});
   const [principlesTarget, setPrinciplesTarget] =
     useState<PrinciplesTarget>("global");
@@ -216,8 +212,6 @@ export default function ProjectMemoryPage() {
     setProjects(p.projects);
     setSelected((previous) => previous || (p.projects[0]?.id ?? ""));
     setSyncError(s.last_error || "");
-    setAutoSync(s.auto_sync);
-    setSyncConfigured(!!s.webdav_configured);
     setCuration(c);
     setTargets(t.targets);
   }, []);
@@ -266,6 +260,12 @@ export default function ProjectMemoryPage() {
       entryRequest.current++;
     };
   }, [connected, refreshEntries, error, stamp]);
+  useEffect(() => {
+    if (!connected) return;
+    const synced = () => { void refresh().catch(error); void refreshEntries().catch(error); };
+    window.addEventListener('toolbox-data-synced', synced);
+    return () => window.removeEventListener('toolbox-data-synced', synced);
+  }, [connected, refresh, refreshEntries, error]);
   async function act(fn: () => Promise<void>) {
     if (busyRef.current) return;
     busyRef.current = true;
@@ -381,11 +381,6 @@ export default function ProjectMemoryPage() {
   const visibleEntries = entries.filter(
     (e) => filter === "all" || e.kind === filter,
   );
-  const syncRunning = memoryJobs.some(
-    (j) =>
-      activeJob(j.status) &&
-      ["memory.sync.run", "memory.ssh.sync"].includes(j.tool),
-  );
   const currentAction = memoryJobs.find((job) => job.id === actionId);
   useEffect(() => {
     if (
@@ -430,13 +425,6 @@ export default function ProjectMemoryPage() {
         </Button>
         <div className="memory-topbar-end">
           <Button
-            disabled={!connected || busy || syncRunning}
-            onClick={() => void act(() => start("memory.sync.run"))}
-          >
-            <RefreshCw size={15} className={syncRunning ? "spin" : ""} />
-            {syncRunning ? "同步中" : "立即同步"}
-          </Button>
-          <Button
             disabled={!connected || busy}
             onClick={() => {
               setPath("");
@@ -454,7 +442,7 @@ export default function ProjectMemoryPage() {
             }}
           >
             <Settings2 size={15} />
-            同步设置
+            记忆库与设备
           </Button>
           <details
             className="memory-more"
@@ -758,7 +746,7 @@ export default function ProjectMemoryPage() {
                     {query
                       ? "试试更短的关键词，或清空搜索。"
                       : current && !current.subscribed
-                        ? "在项目设置中订阅正文，再点击立即同步。"
+                        ? "在项目设置中订阅正文，再点击左下角同步图标。"
                         : "记录值得保留的经验，或创建需要跟进的任务。"}
                   </Empty>
                 )
@@ -1126,7 +1114,7 @@ export default function ProjectMemoryPage() {
             {
               create: "登记项目",
               bind: "项目设置",
-              sync: "设备与同步",
+              sync: "记忆库与设备",
               principles: "基本原则",
             }[panel]
           }
@@ -1385,7 +1373,7 @@ export default function ProjectMemoryPage() {
                 <div
                   className="memory-settings-tabs"
                   role="tablist"
-                  aria-label="同步设置分类"
+                  aria-label="记忆库与设备分类"
                   onKeyDown={(e) => {
                     const tabs = ["webdav", "ssh", "ai"];
                     const index = tabs.indexOf(syncTab);
@@ -1436,46 +1424,9 @@ export default function ProjectMemoryPage() {
                       : "memory-hidden"
                   }
                 >
-                  <p className="muted">
-                    {syncConfigured
-                      ? "已使用工具箱现有的 WebDAV 同步服务。"
-                      : "先在工具箱设置中配置 WebDAV 同步服务。"}
-                    日常只需打开自动同步。另一台电脑加入同一个记忆库后，就能共享项目记录和全局记忆。
-                  </p>
-                  <CheckField
-                    checked={autoSync}
-                    disabled={busy}
-                    onChange={(enabled) =>
-                      void act(async () => {
-                        await rpc("memory.sync.configure", {
-                          auto_sync: enabled,
-                        });
-                        await refresh();
-                      })
-                    }
-                    label="自动同步（每 5 分钟）"
-                    hint="工具箱运行期间同步；离线保留记录并在联网后重试。"
-                  />
+                  <p className="muted">项目记录随统一数据同步更新。另一台设备加入同一记忆库后，即可共享项目记录和全局记忆。</p>
                   {syncError && <Notice tone="warning">{syncError}</Notice>}
                   <div className="button-row">
-                    <Button
-                      onClick={() => {
-                        if (!leave()) return;
-                        sessionStorage.setItem(
-                          "wintoolbox-settings-tab",
-                          "data",
-                        );
-                        navigate("settings");
-                      }}
-                    >
-                      WebDAV 连接设置
-                    </Button>
-                    <Button
-                      busy={busy || syncRunning}
-                      onClick={() => void act(() => start("memory.sync.run"))}
-                    >
-                      同步当前记忆库
-                    </Button>
                     <Button
                       busy={busy}
                       onClick={() =>
@@ -1597,7 +1548,7 @@ export default function ProjectMemoryPage() {
                       首次点击“安装记录工具”，再点击“双向同步”。可同时关联服务器上已有的项目目录。
                     </li>
                     <li>
-                      保存连接后，日常“立即同步”会自动连接服务器。电脑关机期间，服务器仍可独立记录。
+                      保存连接后，日常统一同步会自动连接服务器。电脑关机期间，服务器仍可独立记录。
                     </li>
                   </ol>
                   <Field label="已保存连接">

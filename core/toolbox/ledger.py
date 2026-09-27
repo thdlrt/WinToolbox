@@ -147,7 +147,19 @@ class Ledger:
                 raise ValueError('记账版本包含循环引用')
             for op in incoming.values():
                 if op['op_id'] not in self.operations:
-                    atomic_json(self.ops_dir / (op['op_id'] + '.json'), op)
+                    path = self.ops_dir / (op['op_id'] + '.json')
+                    try:
+                        atomic_json(path, op)
+                    except Exception:
+                        # A write can be durable even when its caller receives an
+                        # error. Retain that fact so cleanup cannot remove assets
+                        # referenced by an already published immutable operation.
+                        try:
+                            if json.loads(path.read_text('utf-8')) == op:
+                                self.operations[op['op_id']] = copy.deepcopy(op)
+                        except (OSError, ValueError):
+                            pass
+                        raise
                     self.operations[op['op_id']] = copy.deepcopy(op)
 
     def graph(self, kind, entity_id):
@@ -213,7 +225,7 @@ class Ledger:
             result = [self.get(kind, key) for key in sorted(ids)]
             return [v for v in result if v and (include_deleted or not v['deleted'])]
 
-    def patch(self, kind, entity_id, changes, parents=None, deleted=False):
+    def patch(self, kind, entity_id, changes, parents=None, deleted=False, operation_id=None):
         with self.lock:
             current = self.get(kind, entity_id)
             if current and current['deleted']:
@@ -221,7 +233,9 @@ class Ledger:
             heads = current['heads'] if current else []
             if parents is not None and sorted(parents) != heads:
                 raise ValueError('条目已有新版本，请刷新后重新解决冲突')
-            op = {'schema': 1, 'op_id': uuid.uuid4().hex, 'entity_type': kind, 'entity_id': entity_id,
+            if operation_id is not None and (not isinstance(operation_id, str) or not ID.fullmatch(operation_id) or operation_id in self.operations):
+                raise ValueError('操作标识无效或已提交')
+            op = {'schema': 1, 'op_id': operation_id or uuid.uuid4().hex, 'entity_type': kind, 'entity_id': entity_id,
                   'parents': heads, 'changes': copy.deepcopy(changes), 'deleted': deleted, 'created_at': time.time()}
             self.ingest([op])
             result = self.get(kind, entity_id)

@@ -20,7 +20,7 @@ from ..webdav_layout import ensure_service_directory, service_config, service_pa
 
 DEFAULTS = {'url': '', 'remote_path': 'WinToolbox', 'username': '', 'include_media': True,
             'include_models': False, 'include_secrets': True}
-SNAPSHOT = re.compile(r'^wintoolbox-\d{8}T\d{6}Z-[a-f0-9]{32}(?:\.enc)?\.wtbak$')
+SNAPSHOT = re.compile(r'^(?:wintoolbox-\d{8}T\d{6}Z-[a-f0-9]{32}(?:\.enc)?\.wtbak|config-(?:windows|android)-\d{8}-\d{6}-[a-f0-9]{32}\.wtconfig\.json)$')
 PROPFIND = b'<?xml version="1.0"?><d:propfind xmlns:d="DAV:"><d:prop><d:resourcetype/><d:getcontentlength/><d:getlastmodified/></d:prop></d:propfind>'
 MAX_SNAPSHOT = 1024 ** 4
 
@@ -124,7 +124,7 @@ class Remote:
         if result is None or not result.findall('.//{DAV:}collection'):
             raise ValueError('WebDAV 工具箱文件夹未创建成功')
 
-    def listing(self):
+    def listing(self, pattern=SNAPSHOT):
         root = self.xml(self.directory, 1)
         if root is None:
             return []
@@ -136,7 +136,7 @@ class Remote:
             path = unquote(resolved.path)
             parent, _, name = path.rpartition('/')
             if (resolved.scheme != directory.scheme or resolved.netloc != directory.netloc
-                    or parent + '/' != unquote(directory.path) or not SNAPSHOT.fullmatch(name)):
+                    or parent + '/' != unquote(directory.path) or not pattern.fullmatch(name)):
                 continue
             props = next((node.find('{DAV:}prop') for node in response.findall('{DAV:}propstat')
                           if ' 200 ' in node.findtext('{DAV:}status', '')), None)
@@ -151,7 +151,7 @@ class Remote:
             modified = None
             with contextlib.suppress(ValueError, TypeError, OverflowError):
                 modified = email.utils.parsedate_to_datetime(props.findtext('{DAV:}getlastmodified')).isoformat()
-            result.append({'name': name, 'size': size, 'modified_at': modified, 'encrypted': name.endswith('.enc.wtbak')})
+            result.append({'name': name, 'size': size, 'modified_at': modified, 'encrypted': name.endswith(('.enc.wtbak', '.wtconfig.json'))})
         return sorted(result, key=lambda row: row['name'], reverse=True)
 
     def upload(self, path, name, job):
@@ -234,6 +234,7 @@ def register(app):
     lock = threading.RLock()
     sync_lock = threading.Lock()
     credentials = {}
+    previews = {}
 
     def config():
         saved = json.loads(path.read_text('utf-8')) if path.exists() else {}
@@ -270,10 +271,11 @@ def register(app):
                     app.relay.remember_source(service_config(previous, 'relay'))
                 remember_ledger_source(app.data_dir, previous, value)
             atomic_json(path, value)
-            if hasattr(app, 'ledger_auto_sync'):
-                app.ledger_auto_sync()
-            if hasattr(app, 'memory_auto_sync_wake'):
-                app.memory_auto_sync_wake()
+            if hasattr(app, 'data_sync'):
+                if any(value.get(key) != previous.get(key) for key in ('url', 'username', 'remote_path', 'password_dpapi')):
+                    app.data_sync.connection_changed()
+                else:
+                    app.data_sync.request()
             return get()
 
     def require_config():
@@ -300,13 +302,68 @@ def register(app):
 
     def listing(_):
         value = require_config()
-        with remote(service_config(value, 'config_backups')) as client:
+        with remote(service_config(value, 'configuration')) as client:
             client.ensure_directory()
-            snapshots = [{**row, 'scope': 'config', 'location': 'config'} for row in client.listing()]
+            snapshots = [{**row, 'scope': 'config', 'location': 'unified', 'kind': 'unified',
+                          'source_platform': 'android' if row['name'].startswith('config-android-') else 'windows'}
+                         for row in client.listing() if row['name'].endswith('.wtconfig.json')]
+        with remote(service_config(value, 'config_backups')) as client:
+            snapshots.extend({**row, 'scope': 'config', 'location': 'config'} for row in client.listing())
         with remote(value) as client:
             snapshots.extend({**row, 'scope': 'legacy_full', 'location': 'legacy_root'} for row in client.listing())
-        return {'snapshots': sorted(snapshots, key=lambda row: row['name'], reverse=True),
-                'remote_path': service_config(value, 'config_backups')['remote_path']}
+        with remote(service_config(value, 'ai_config')) as client:
+            snapshots.extend({**row, 'encrypted': True, 'scope': 'config', 'location': 'legacy_ai', 'kind': 'legacy_ai',
+                              'source_platform': 'shared'} for row in client.listing(re.compile(r'^config-v1\.json$')))
+        return {'snapshots': sorted(snapshots, key=lambda row: row.get('modified_at') or row['name'], reverse=True),
+                'remote_path': service_config(value, 'configuration')['remote_path']}
+
+    def identity(value):
+        import hashlib
+        return hashlib.sha256(json.dumps({k: value.get(k) for k in ('url', 'username', 'remote_path', 'password_dpapi')}, sort_keys=True).encode()).hexdigest()
+
+    def preview(params):
+        import time
+        from .. import config_snapshots, ai_config
+        value = require_config()
+        location, name = params.get('location'), params.get('name')
+        if location == 'unified':
+            snapshot_name(name)
+            if not name.endswith('.wtconfig.json'):
+                raise ValueError('配置备份名称无效')
+            target = service_config(value, 'configuration')
+        elif location == 'legacy_ai' and name == 'config-v1.json':
+            target = service_config(value, 'ai_config')
+        else:
+            raise ValueError('请选择可预览的配置备份')
+        with app.data_lock, app.settings.lock:
+            before = config_snapshots.revision(app)
+        with remote(target) as client:
+            body = bytearray()
+            with client.client.stream('GET', client.directory + quote(name, safe='')) as response:
+                client.checked(response, (200,))
+                for block in response.iter_bytes(65536):
+                    body.extend(block)
+                    if len(body) > config_snapshots.LIMIT:
+                        raise ValueError('配置备份过大')
+        password = protect(value['password_dpapi'], decrypt=True)
+        if location == 'legacy_ai':
+            shared = ai_config.decrypt(ai_config.parse(body), password)
+            payload = {'format': config_snapshots.FORMAT, 'version': 2, 'platform': 'android',
+                       'created_at': 0, 'config': {}, 'ai': shared}
+        else:
+            payload = config_snapshots.decrypt(config_snapshots.parse(body), password)
+        token = uuid.uuid4().hex
+        with lock:
+            for key in list(previews):
+                if time.monotonic() - previews[key]['at'] > 900:
+                    previews.pop(key)
+            if len(previews) >= 8:
+                previews.pop(next(iter(previews)))
+            previews[token] = {'payload': payload, 'revision': before, 'identity': identity(value),
+                               'name': name, 'location': location, 'at': time.monotonic()}
+        return {**ai_config.preview(payload['ai']), 'token': token, 'source_platform': payload['platform'],
+                'scope': 'config', 'created_at': payload['created_at'], 'same_platform': payload['platform'] == 'windows',
+                'message': '恢复本机设置及共享 AI 配置，应用数据不变。' if payload['platform'] == 'windows' else '仅恢复共享 AI 配置，本机偏好和应用数据不变。'}
 
     def secret_for(job):
         with lock:
@@ -316,32 +373,41 @@ def register(app):
             return copy.deepcopy(value)
 
     def upload_job(job):
-        from ..config_backup import export_config
+        from .. import config_snapshots
         saved = secret_for(job)
         if not sync_lock.acquire(blocking=False):
-            raise ValueError('已有 WebDAV 同步任务正在运行')
+            raise ValueError('已有配置备份任务正在运行')
         try:
-            stamp = datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%dT%H%M%SZ')
-            name = 'wintoolbox-' + stamp + '-' + uuid.uuid4().hex + ('.enc' if saved['password'] else '') + '.wtbak'
+            stamp = datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%d-%H%M%S')
+            name = 'config-windows-' + stamp + '-' + uuid.uuid4().hex + '.wtconfig.json'
             with tempfile.TemporaryDirectory(prefix='.webdav-upload-', dir=app.data_dir.parent) as directory:
                 source = Path(directory) / name
-                with getattr(app, 'data_lock', contextlib.nullcontext()), app.settings.lock:
-                    exported = export_config(app, source, StageJob(job, 0, .45), password=saved['password'], include_secrets=saved['options']['include_secrets'])
+                with app.data_lock, app.settings.lock:
+                    payload = config_snapshots.snapshot(app)
+                source.write_bytes(config_snapshots.encode(config_snapshots.encrypt(payload, saved['password'])))
                 with remote(saved['config']) as client:
                     size = client.upload(source, name, job)
-            return {'name': name, 'size': size, 'encrypted': bool(saved['password']), 'remote_path': saved['config']['remote_path'],
-                    'scope': 'config',
-                    'files': exported['files'], 'warnings': exported['warnings']}
+            return {'name': name, 'size': size, 'encrypted': True, 'remote_path': saved['config']['remote_path'],
+                    'scope': 'config', 'files': len(payload['config']), 'warnings': []}
         finally:
             sync_lock.release()
+            with lock:
+                credentials.pop(job.params.get('credential_token'), None)
 
     def restore_job(job):
         from ..config_backup import import_config
         saved = secret_for(job)
-        name = snapshot_name(job.params.get('name'))
+        name = job.params.get('name')
         if not sync_lock.acquire(blocking=False):
             raise ValueError('已有 WebDAV 同步任务正在运行')
         try:
+            if 'preview' in saved:
+                from .. import config_snapshots
+                item = saved['preview']
+                if identity(require_config()) != item['identity']:
+                    raise ValueError('WebDAV 连接已变化，请重新预览')
+                return config_snapshots.restore(app, item['payload'], job, item['revision'])
+            snapshot_name(name)
             with tempfile.TemporaryDirectory(prefix='.webdav-download-', dir=app.data_dir.parent) as directory:
                 source = Path(directory) / name
                 with remote(saved['config']) as client:
@@ -352,27 +418,40 @@ def register(app):
             return {**result, 'remote_name': name}
         finally:
             sync_lock.release()
+            with lock:
+                credentials.pop(job.params.get('credential_token'), None)
 
     def submit(params, restore=False):
+        import time
         value = require_config()
-        password = params.get('backup_password', '')
-        if not isinstance(password, str) or password and len(password) < 8:
-            raise ValueError('备份密码至少需要 8 个字符')
-        options = {'include_secrets': params.get('include_secrets', value['include_secrets'])}
-        if any(not isinstance(flag, bool) for flag in options.values()):
-            raise ValueError('同步范围选项无效')
-        if not restore and options['include_secrets'] and len(password) < 8:
-            raise ValueError('包含 API 密钥时，请填写至少 8 位备份密码')
-        name = snapshot_name(params.get('name')) if restore else None
-        location = params.get('location', 'config')
-        if location not in ('config', 'legacy_root'):
-            raise ValueError('配置备份位置无效')
-        if not restore or location == 'config':
+        location = params.get('location', 'config') if restore else 'unified'
+        previewed = None
+        if restore and location in ('unified', 'legacy_ai'):
+            with lock:
+                previewed = previews.pop(params.get('preview_token'), None)
+            if (not previewed or time.monotonic() - previewed['at'] > 900 or previewed['name'] != params.get('name')
+                    or previewed['location'] != location or previewed['identity'] != identity(value)):
+                raise ValueError('预览已失效，请重新预览配置备份')
+            name = previewed['name']
+            password = ''
+        elif restore:
+            name = snapshot_name(params.get('name'))
+            if location not in ('config', 'legacy_root'):
+                raise ValueError('配置备份位置无效')
+            password = params.get('backup_password', '')
+            if not isinstance(password, str):
+                raise ValueError('备份密码应为文本')
+        else:
+            name = None
+            password = protect(value['password_dpapi'], decrypt=True)
+        if location == 'unified':
+            value = service_config(value, 'configuration')
+        elif location == 'config':
             value = service_config(value, 'config_backups')
         token = uuid.uuid4().hex
         with lock:
-            credentials[token] = {'config': value, 'password': password, 'options': options}
-        safe = {'credential_token': token, **({'name': name, 'location': location} if restore else options)}
+            credentials[token] = {'config': value, 'password': password, **({'preview': previewed} if previewed else {})}
+        safe = {'credential_token': token, **({'name': name, 'location': location} if restore else {})}
         try:
             return app.jobs.submit('webdav.restore' if restore else 'webdav.upload', safe)
         except BaseException:
@@ -382,7 +461,7 @@ def register(app):
 
     app.jobs.register('webdav.upload', upload_job)
     app.jobs.register('webdav.restore', restore_job)
-    for name, handler in (('get', get), ('save', save), ('test', test), ('list', listing)):
+    for name, handler in (('get', get), ('save', save), ('test', test), ('list', listing), ('preview', preview)):
         app.register('webdav.' + name, handler)
     app.register('webdav.upload', lambda p: submit(p))
     app.register('webdav.restore', lambda p: submit(p, restore=True))

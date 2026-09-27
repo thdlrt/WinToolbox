@@ -4,6 +4,7 @@ import { errorText, isDesktop, rpc, subscribe, type Job, type Settings } from '.
 import { AppContext, type AppInfo, type Page } from './context';
 import { cx, IconButton } from './ui';
 import { migratedUiPreferences, validFavorites, validTheme } from './uiPreferences';
+import DataSyncIndicator from './DataSyncIndicator';
 import HomePage from './pages/Home';
 import OrbSettingsPage from './pages/OrbSettings';
 import SystemMemoryPage from './pages/SystemMemory';
@@ -174,7 +175,7 @@ export default function App() {
     {captions ? <CaptionOverlay /> : overlay ? <div className="overlay-shell"><LivePage overlay /></div> : <div className={cx('app-shell', collapsed && 'nav-collapsed')}>
       <aside className="sidebar"><button className="brand" onClick={() => navigate('home')} aria-label="WinToolbox 首页"><span className="brand-logo"><Boxes size={22} strokeWidth={1.8} /></span><span className="brand-text">WinToolbox</span></button>
         <nav aria-label="主导航">{sidebarNav.map(item => <div key={item.id}><button title={item.name} className={cx('nav-item', (page === item.id || page === 'phonetics' && item.id === 'practice') && 'active')} onClick={() => navigate(item.id)}><item.icon size={19} strokeWidth={1.8} /><span>{item.name}</span></button></div>)}</nav>
-        <div className="sidebar-bottom"><div className="local-status"><span className={cx('connection-dot', connected && 'online')} /><span>{connected ? '服务已连接' : isDesktop() ? '服务未连接' : '浏览器预览'}</span></div><button className="collapse-button" aria-label={collapsed ? '展开侧栏' : '收起侧栏'} title={collapsed ? '展开侧栏' : '收起侧栏'} onClick={() => setCollapsed(!collapsed)}>{collapsed ? <PanelLeftOpen size={17} /> : <PanelLeftClose size={17} />}<span>收起侧栏</span></button></div>
+        <div className="sidebar-bottom"><div className="local-status"><span className={cx('connection-dot', connected && 'online')} /><span>{connected ? '服务已连接' : isDesktop() ? '服务未连接' : '浏览器预览'}</span><DataSyncIndicator /></div><button className="collapse-button" aria-label={collapsed ? '展开侧栏' : '收起侧栏'} title={collapsed ? '展开侧栏' : '收起侧栏'} onClick={() => setCollapsed(!collapsed)}>{collapsed ? <PanelLeftOpen size={17} /> : <PanelLeftClose size={17} />}<span>收起侧栏</span></button></div>
       </aside>
       <main className="main-panel"><header className="topbar"><h1 className="page-title">{activeNav.name}</h1><div className="topbar-actions"><IconButton label={theme === 'dark' ? '切换浅色模式' : '切换深色模式'} onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}>{theme === 'dark' ? <Sun size={18} /> : <Moon size={18} />}</IconButton></div></header>
         {!connected && <div className="connection-banner"><FileStack size={15} /><span>{isDesktop() ? '本地服务尚未连接。配置与任务将在连接恢复后可用。' : '浏览器预览模式 · 打开桌面程序后即可连接本地文件和处理引擎。'}</span>{isDesktop() && <button onClick={() => void refresh()}>重新连接</button>}</div>}

@@ -1,0 +1,20 @@
+import { strict as assert } from 'node:assert';
+import { dataSyncTitle, dataSyncError, syncRelativeTime } from './dataSyncState.ts';
+const ready={configured:true,syncing:false,last_sync:1000,error:null,services:[]};
+assert.equal(syncRelativeTime(1000,1005000),'刚刚');
+assert.equal(syncRelativeTime(1000,1120000),'2 分钟前');
+assert.equal(syncRelativeTime(1000,8200000),'2 小时前');
+assert.equal(syncRelativeTime(1000,173800000),'2 天前');
+assert.match(dataSyncTitle(ready,true,'',false,1120000),/2 分钟前/);
+assert.match(dataSyncTitle({...ready,configured:false}),/未配置/);
+assert.match(dataSyncTitle({...ready,syncing:true}),/正在同步/);
+assert.match(dataSyncTitle(ready,false),/未连接/);
+assert.match(dataSyncTitle(ready,true,'请求超时'),/失败：请求超时/);
+const partial={...ready,services:[{id:'memory',label:'项目记忆',error:'离线'}]};
+assert.equal(dataSyncError(partial),'项目记忆：离线');
+assert.match(dataSyncTitle(partial),/失败/);
+assert.doesNotMatch(dataSyncTitle(partial),/最近同步/);
+assert.match(dataSyncTitle({...ready,last_sync:null}),/尚未同步/);
+console.log('PASS sync status seconds, relative time, busy, partial failure and connection errors');
+
+assert.match(dataSyncTitle({...ready,configured:false,services:[{id:'old',label:'旧服务',configured:false,error:'旧错误'}]}),/未配置/);

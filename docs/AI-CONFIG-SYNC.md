@@ -1,3 +1,5 @@
+> Windows 0.4.1 / Android 0.6.2 起，AI 配置并入[统一配置备份](CONFIG-BACKUP.md)。下文保留 v1 协议供兼容读取，界面不再单独上传 AI 配置。
+
 # AI configuration sharing v1
 
 Both clients manually share `<shared WebDAV root>/ai-config/config-v1.json`.

@@ -223,6 +223,10 @@ def test_rpc_local_attachment_and_restore_lifecycle(tmp_path):
         assert configured['auto_sync'] and configured['interval_seconds'] == 60
         app.memory_before_restore(); app.memory_after_restore()
         assert handlers['memory.projects']({})['projects'][0]['id'] == project['id']
+        generation = app.data_sync.services['project_memory']['generation']
+        handlers['memory.entry.save']({'entry': {'title': '恢复后编辑', 'body': 'fixture',
+                                                'kind': 'knowledge', 'project_id': project['id']}})
+        assert app.data_sync.services['project_memory']['generation'] > generation
     finally:
         app.memory_close()
 

@@ -26,6 +26,8 @@ class App:
         self.storage = Storage(self.data_dir)
         self.settings = Settings(self.data_dir)
         self.jobs = Jobs(self)
+        from .data_sync import ensure_manager
+        ensure_manager(self)
         self.models = Models(self)
         from .local_llm import LocalLLM
         self.local_llm = LocalLLM(self)
@@ -70,8 +72,7 @@ class App:
             register_live_handlers(self)
         from .document_runtime import register as register_document_runtime
         register_document_runtime(self)
-        if hasattr(self, "ledger_auto_sync"):
-            self.ledger_auto_sync()
+        self.data_sync.start()
         if register_live and hasattr(self, "memory_cleaner_start"):
             self.memory_cleaner_start()
 
@@ -87,7 +88,7 @@ class App:
             raise ValueError("params 必须为 JSON 对象")
         # Snapshot/restore takes this gate before jobs/storage locks. Synchronous
         # edits already in flight finish first; new edits cannot race replacement.
-        if method in ("app.info", "jobs.get", "jobs.list", "jobs.cancel"):
+        if method in ("app.info", "app.prepare_exit", "jobs.get", "jobs.list", "jobs.cancel", "data_sync.status", "data_sync.now", "webdav.preview", "webdav.list", "webdav.test"):
             return self.handlers[method](params or {})
         if self.maintenance:
             raise RuntimeError("正在同步或恢复数据，请稍后再操作")
@@ -122,6 +123,7 @@ class App:
         self.providers.local_llm = self.local_llm
 
     def before_restore(self, current_job_id):
+        self.data_sync.assert_idle()
         with self.jobs.lock:
             if any(id != current_job_id for id in self.jobs.active):
                 raise RuntimeError("请等待其他任务结束或取消后再恢复备份")
@@ -138,6 +140,7 @@ class App:
             self.ledger_before_restore()
 
     def close(self):
+        self.data_sync.close()
         if hasattr(self, "ledger_close"):
             self.ledger_close()
         if hasattr(self, "memory_cleaner_close"):
@@ -165,6 +168,7 @@ class App:
         self.providers.client.close()
 
     def prepare_exit(self):
+        self.data_sync.close()
         if hasattr(self, "memory_cleaner_close"):
             self.memory_cleaner_close()
         if hasattr(self, "ledger_close"):

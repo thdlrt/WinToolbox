@@ -1,5 +1,5 @@
 import { strict as assert } from 'node:assert';
-import { acceptExpenseUpdate, changeExpenseType, emptyExpenseFilters, expenseAmountValid, expenseDirty, expenseDraft, expenseMoney, expensePeriodValid, expenseQueryParams, expenseValidation, localDate, newExpense, newExpenseInPeriod, normalizedExpenseStatus } from './expensesState.ts';
+import { recentExpensePeriod, pendingExpenseAttachments, attachmentFileName, acceptExpenseUpdate, changeExpenseType, emptyExpenseFilters, expenseAmountValid, expenseDirty, expenseDraft, expenseMoney, expensePeriodValid, expenseQueryParams, expenseValidation, localDate, newExpense, newExpenseInPeriod, normalizedExpenseStatus } from './expensesState.ts';
 
 assert.equal(localDate(new Date(2026, 8, 1, 0, 5)), '2026-09-01', 'local midnight must not become the previous UTC date');
 assert.equal(newExpense('2026-09', '2026-09-10').date, '2026-09-10');
@@ -47,3 +47,13 @@ assert.deepEqual(expenseQueryParams(period, { ...emptyExpenseFilters(), query: '
 assert.equal(newExpenseInPeriod(period, '2026-01-12').date, '2026-01-12');
 assert.equal(newExpenseInPeriod(period, '2026-09-11').date, '2025-12-01');
 console.log('Expenses: 53 assertions passed; precise decimal, legacy migration, type switching and inclusive ranges.');
+
+assert.deepEqual(recentExpensePeriod(3,new Date(2026,0,15)),{start_month:'2025-11',end_month:'2026-01',start_date:'2025-11-01',end_date:'2026-01-15'});
+assert.deepEqual(recentExpensePeriod(6,new Date(2024,1,29)),{start_month:'2023-09',end_month:'2024-02',start_date:'2023-09-01',end_date:'2024-02-29'});
+assert.equal(recentExpensePeriod(3,new Date(2026,8,30)).start_date,'2026-07-01');
+const pending=pendingExpenseAttachments([],['C:/Docs/receipt.pdf'],'invoice');
+assert.deepEqual(pendingExpenseAttachments(pending,['c:/docs/RECEIPT.pdf','C:/Docs/payment.png'],'payment'),[{path:'C:/Docs/receipt.pdf',kind:'invoice'},{path:'C:/Docs/payment.png',kind:'payment'}]);
+assert.equal(pending.length,1,'adding files does not mutate prior draft');
+assert.equal(attachmentFileName('C:/Docs/payment.png'),'payment.png');
+assert.equal(attachmentFileName('C:\\Docs\\receipt.pdf'),'receipt.pdf');
+console.log('PASS natural-month shortcuts cross year/leap day and local attachment drafts deduplicate without mutating prior state');

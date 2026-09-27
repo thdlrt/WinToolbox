@@ -145,6 +145,7 @@ def pair(tmp_path, monkeypatch, server):
     monkeypatch.setattr('toolbox.settings.protect', fixture_protect)
     apps = [App(tmp_path / name, register_live=False) for name in ('source', 'target')]
     for app in apps:
+        app.data_sync.stop_worker()  # Isolate backup tests from unrelated background replication.
         app.call('webdav.save', {'url': server['url'], 'remote_path': '重要文件/sync/WinToolbox',
                                 'username': 'fixture-user', 'password': 'fixture-dav-password', 'include_secrets': False})
     yield (*apps, server)
@@ -196,15 +197,14 @@ def test_all_provider_keys_sync_and_are_reprotected_on_receiving_device(pair, mo
                   'api_key': 'fixture-secret-' + kind} for kind in ('dashscope', 'openai', 'gemini')]
     source.call('settings.update', {'providers': providers})
     source.call('webdav.save', {'include_secrets': True})
-    with pytest.raises(ValueError, match='8'):
-        source.call('webdav.upload')
     # Use the saved scope, as the normal UI does after saving connection options.
     uploaded = finish(source, source.call('webdav.upload', {'backup_password': 'fixture-sync-password'}))['result']
-    payload = server['files']['/dav/重要文件/sync/WinToolbox/config-backups/windows/' + uploaded['name']]
-    assert payload.startswith(backups.MAGIC)
+    payload = server['files']['/dav/重要文件/sync/WinToolbox/config-backups/shared/' + uploaded['name']]
+    assert json.loads(payload)['format'] == 'wintoolbox-config-backup-encrypted'
     assert all(provider['api_key'].encode() not in payload for provider in providers)
     device[0] = 'target'
-    finish(target, target.call('webdav.restore', {'name': uploaded['name'], 'backup_password': 'fixture-sync-password'}))
+    preview = target.call('webdav.preview', {'name': uploaded['name'], 'location': 'unified'})
+    finish(target, target.call('webdav.restore', {'name': uploaded['name'], 'location': 'unified', 'preview_token': preview['token']}))
     assert all(provider['has_key'] for provider in target.settings.get()['providers'])
     for provider in providers:
         assert target.settings.secret(provider['id']) == provider['api_key']
@@ -232,6 +232,7 @@ def test_only_last_directory_created_and_redirects_rejected(pair):
 def test_encrypted_config_roundtrip_excludes_media_and_saves_recovery(pair):
     source, target, server = pair
     source.call('settings.update', {'preferences': {'fixture': 'remote-value'}})
+    source.settings.value['roles'] = {}
     source.call('settings.update', {'providers': [{'id': 'fixture', 'kind': 'openai', 'name': 'fixture', 'base_url': 'https://example.invalid/v1', 'api_key': 'fixture-api-key'}]})
     practice = source.data_dir / 'practice'
     (practice / 'audio' / 'fixture.wav').write_bytes(b'RIFF-fixture-audio')
@@ -239,11 +240,12 @@ def test_encrypted_config_roundtrip_excludes_media_and_saves_recovery(pair):
     target.call('settings.update', {'preferences': {'fixture': 'local-before-restore'}})
     config_before = (target.data_dir / 'webdav.json').read_bytes()
     uploaded = finish(source, source.call('webdav.upload', {'backup_password': 'fixture-backup-password', 'include_secrets': True}))['result']
-    assert uploaded['encrypted'] and uploaded['name'].endswith('.enc.wtbak')
+    assert uploaded['encrypted'] and uploaded['name'].endswith('.wtconfig.json')
     assert not any(a['kind'] == 'backup' for a in source.jobs.list()[0]['artifacts'])
     assert not any(name.endswith('.part') for name in server['files'])
     assert target.call('webdav.list')['snapshots'][0]['name'] == uploaded['name']
-    restored = finish(target, target.call('webdav.restore', {'name': uploaded['name'], 'backup_password': 'fixture-backup-password'}))['result']
+    preview = target.call('webdav.preview', {'name': uploaded['name'], 'location': 'unified'})
+    restored = finish(target, target.call('webdav.restore', {'name': uploaded['name'], 'location': 'unified', 'preview_token': preview['token']}))['result']
     assert Path(restored['recovery_path']).is_dir()
     assert target.settings.get()['preferences']['fixture'] == 'remote-value'
     assert target.settings.secret('fixture') == 'fixture-api-key'
@@ -258,8 +260,13 @@ def test_wrong_password_and_tampered_backup_do_not_change_data(pair):
     source, target, server = pair
     target.call('settings.update', {'preferences': {'keep': 'original'}})
     before = target.settings.path.read_bytes()
-    uploaded = finish(source, source.call('webdav.upload', {'backup_password': 'correct-password'}))['result']
-    finish(target, target.call('webdav.restore', {'name': uploaded['name'], 'backup_password': 'wrong-password'}), 'failed')
+    uploaded = finish(source, source.call('webdav.upload'))['result']
+    remote_path = '/dav/重要文件/sync/WinToolbox/config-backups/shared/' + uploaded['name']
+    envelope = json.loads(server['files'][remote_path])
+    envelope['ciphertext'] = ('A' if envelope['ciphertext'][0] != 'A' else 'B') + envelope['ciphertext'][1:]
+    server['files'][remote_path] = json.dumps(envelope).encode()
+    with pytest.raises(ValueError, match='解密失败'):
+        target.call('webdav.preview', {'name': uploaded['name'], 'location': 'unified'})
     assert target.settings.path.read_bytes() == before
     name = filename()
     server['files']['/dav/重要文件/sync/WinToolbox/' + name] = b'not-a-valid-backup'
@@ -275,7 +282,8 @@ def test_configuration_snapshot_preserves_existing_business_data(pair):
     models = target.data_dir / 'models/keep-model.bin'
     models.write_bytes(b'keep model')
     uploaded = finish(source, source.call('webdav.upload'))['result']
-    restored = finish(target, target.call('webdav.restore', {'name': uploaded['name']}))['result']
+    preview = target.call('webdav.preview', {'name': uploaded['name'], 'location': 'unified'})
+    restored = finish(target, target.call('webdav.restore', {'name': uploaded['name'], 'location': 'unified', 'preview_token': preview['token']}))['result']
     assert old.read_text() == 'old paragraph' and models.read_bytes() == b'keep model'
     assert Path(restored['recovery_path']).is_dir()
     assert not (Path(restored['recovery_path']) / 'practice').exists()
@@ -299,8 +307,8 @@ def test_remote_names_are_restricted_and_generic_job_secrets_rejected(pair):
         app.call('jobs.submit', {'tool': 'webdav.upload', 'params': {'backup_password': 'never-write-this-password'}})
     assert len(app.jobs.list()) == before
     assert 'never-write-this-password' not in json.dumps(app.jobs.list())
-    with pytest.raises(ValueError, match='8'):
-        app.call('webdav.upload', {'include_secrets': True})
+    uploaded = finish(app, app.call('webdav.upload'))['result']
+    assert uploaded['encrypted']
 
 
 def test_cancelled_upload_never_publishes_snapshot(pair, tmp_path):

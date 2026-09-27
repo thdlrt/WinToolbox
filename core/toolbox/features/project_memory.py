@@ -26,7 +26,8 @@ def register(app):
     config_path = app.data_dir / 'project-memory-local' / store.device_id / 'sync.json'
     config_path.parent.mkdir(parents=True, exist_ok=True)
     ssh_path = config_path.parent / 'ssh.json'
-    stop = threading.Event()
+    from ..data_sync import ensure_manager
+    manager = ensure_manager(app)
     state_lock = threading.RLock()
     lock = threading.Lock()
 
@@ -62,12 +63,14 @@ def register(app):
             value['id'] = previous['id'] if previous else str(uuid.uuid4())
             rows = [row for row in rows if row['id'] != value['id']] + [value]
             atomic_json(ssh_path, {'targets': rows})
+        manager.request('project_memory')
         return {'target': value}
 
     def ssh_remove(params):
         with state_lock:
             rows = ssh_targets()['targets']
             atomic_json(ssh_path, {'targets': [row for row in rows if row['id'] != params['id']]})
+        manager.request('project_memory')
         return {'ok': True}
 
     def remote():
@@ -77,14 +80,17 @@ def register(app):
             raise ValueError('请先在设置中配置 WebDAV 地址、账号和密码')
         return MemoryRemote(value)
 
-    def status(_):
-        value = config()
+    def connections():
         from ..webdav_layout import shared_config
         dav = shared_config(app.data_dir)
         webdav_configured = bool(dav.get('url') and dav.get('username') and dav.get('password_dpapi'))
         ssh_count = sum(bool(target.get('enabled')) for target in ssh_targets()['targets'])
-        return {**store.info(), 'configured': webdav_configured or bool(ssh_count), 'webdav_configured': webdav_configured, 'ssh_target_count': ssh_count,
-                'auto_sync': bool(value.get('auto_sync', False)), 'interval_seconds': value.get('interval_seconds', 300), 'last_result': value.get('last_result'), 'last_error': value.get('last_error'),
+        return {'configured': webdav_configured or bool(ssh_count), 'webdav_configured': webdav_configured, 'ssh_target_count': ssh_count}
+
+    def status(_):
+        value = config()
+        return {**store.info(), **connections(),
+                'auto_sync': True, 'interval_seconds': manager.interval, 'last_result': value.get('last_result'), 'last_error': value.get('last_error'),
                 'last_sync_at': value.get('last_sync_at')}
 
     def configure(params):
@@ -93,10 +99,11 @@ def register(app):
             if 'auto_sync' in params:
                 if not isinstance(params['auto_sync'], bool):
                     raise ValueError('自动同步开关必须是布尔值')
-                value['auto_sync'] = params['auto_sync']
+            value.pop('auto_sync', None)
             if 'interval_seconds' in params:
                 value['interval_seconds'] = max(60, min(86400, int(params['interval_seconds'])))
             atomic_json(config_path, value)
+        manager.request('project_memory')
         return status({})
 
     def sync_job(job):
@@ -124,9 +131,14 @@ def register(app):
                 raise ValueError('已配置的 SSH 目标均未同步成功：' + '；'.join(row['host'] + ': ' + row['message'] for row in warnings))
             else:
                 raise ValueError('请先配置 WebDAV 或保存 SSH 同步目标')
+            operations = store.export_operations()
+            known_ids = {operation['op_id'] for operation in operations}
+            missing = {parent for operation in operations for parent in operation['parents'] if parent not in known_ids}
+            if missing:
+                warnings.append({'id': 'missing_parents', 'message': '部分项目记忆缺少父版本，将在后续同步中继续获取'})
             result.update(ssh=exchanges, warnings=warnings)
             with state_lock:
-                atomic_json(config_path, {**config(), 'last_result': result, 'last_error': None, 'last_sync_at': datetime.now(timezone.utc).isoformat()})
+                atomic_json(config_path, {**config(), 'last_result': result, 'last_error': '；'.join(row['message'] for row in warnings) or None, **({'last_sync_at': datetime.now(timezone.utc).isoformat()} if not warnings else {})})
             curate = getattr(app, 'memory_auto_curate', None)
             if curate:
                 curate()
@@ -203,53 +215,42 @@ def register(app):
         'sync.join': lambda p: store.join_library(p['library_id']),
     }
     for name, handler in handlers.items():
-        app.register('memory.' + name, handler)
-    for name, runner in [('sync.run', sync_job), ('sync.libraries', libraries_job),
+        if name in ('sync.join', 'project.subscribe'):
+            def changing(params, handler=handler):
+                result = handler(params)
+                manager.request('project_memory', immediate=False)
+                return result
+            app.register('memory.' + name, changing)
+        else:
+            app.register('memory.' + name, handler)
+
+    def ssh_sync_job(job):
+        # Ad-hoc SSH exchange is a user job, but shares the same store gate.
+        if not lock.acquire(blocking=False):
+            raise ValueError('项目记忆同步正在运行，请稍后重试')
+        try:
+            result = project_memory_ssh.sync(job.params, store, job)
+            manager.request('project_memory')
+            return result
+        finally:
+            lock.release()
+    manager.register('project_memory', '项目记忆', lambda: connections()['configured'], sync_job)
+    store.on_change = lambda: manager.request('project_memory', immediate=False)
+    for name, runner in [('sync.run', lambda job: manager.run('project_memory', job)), ('sync.libraries', libraries_job),
                          ('ssh.install', lambda job: project_memory_ssh.install(job.params, job)),
-                         ('ssh.sync', lambda job: project_memory_ssh.sync(job.params, store, job))]:
+                         ('ssh.sync', ssh_sync_job)]:
         app.jobs.register('memory.' + name, runner)
         app.register('memory.' + name, lambda p, tool='memory.' + name: app.jobs.submit(tool, p))
 
-    sync_wake = threading.Event()
-
-    def auto_worker():
-        import time
-        last_attempt = 0.0
-        while not stop.is_set():
-            force = sync_wake.wait(2)
-            sync_wake.clear()
-            if stop.is_set():
-                break
-            try:
-                value = status({})
-                interval = value.get('interval_seconds', 300)
-                if (not value['auto_sync'] or not value['configured'] or app.maintenance
-                        or not force and time.monotonic() - last_attempt < interval):
-                    continue
-                with app.data_lock:
-                    if app.maintenance or stop.is_set():
-                        continue
-                    active = getattr(app.jobs, 'active', {})
-                    if any(getattr(j, 'record', {}).get('tool') == 'memory.sync.run' for j in list(active.values())):
-                        continue
-                    app.jobs.submit('memory.sync.run', {})
-                    last_attempt = time.monotonic()
-            except Exception:
-                # Job errors are visible in status and jobs. A failed configuration must
-                # not crash the application or produce a busy retry loop.
-                last_attempt = time.monotonic()
-
-    thread = threading.Thread(target=auto_worker, name='project-memory-sync', daemon=True)
-    thread.start()
-    def stop_worker():
-        stop.set()
-        sync_wake.set()
-        thread.join(timeout=3)
     def close():
-        stop_worker()
+        manager.close()
         store.close()
-    app.memory_stop = stop_worker
-    app.memory_auto_sync_wake = sync_wake.set
+    app.memory_stop = manager.stop_worker
+    app.memory_auto_sync_wake = lambda: manager.request('project_memory')
     app.memory_close = close
     app.memory_before_restore = store.close
-    app.memory_after_restore = store.reopen
+    def after_restore():
+        store.reopen()
+        store.on_change = lambda: manager.request('project_memory', immediate=False)
+        manager.request('project_memory')
+    app.memory_after_restore = after_restore

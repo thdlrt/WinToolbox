@@ -44,9 +44,9 @@ def validate_config(name, value):
         for provider in providers:
             if not isinstance(provider, dict) or not isinstance(provider.get('id'), str) or not provider['id'].strip() or provider['id'] in ids or provider.get('kind') not in ('openai', 'dashscope', 'gemini'):
                 raise ValueError('模型供应商 ID 或类型无效')
-            if set(provider) - {'id', 'name', 'kind', 'base_url', 'region'}:
+            if set(provider) - {'id', 'name', 'kind', 'base_url', 'region', 'model'}:
                 raise ValueError('模型供应商包含不支持的配置字段')
-            if any(key in provider and not isinstance(provider[key], str) for key in ('name', 'base_url', 'region')):
+            if any(key in provider and not isinstance(provider[key], str) for key in ('name', 'base_url', 'region', 'model')):
                 raise ValueError('模型供应商字段格式无效')
             ids.add(provider['id'])
         for role in value.get('roles', {}).values():

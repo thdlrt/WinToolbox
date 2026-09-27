@@ -134,8 +134,9 @@ def register(app):
     lock = threading.RLock()
     ledger = Ledger(root)
     app.ledger = ledger
+    unprojected = set()
 
-    def journal(item, previous=None):
+    def journal(item, previous=None, operation_id=None):
         fields = ('title', 'date', 'amount', 'amount_minor', 'currency', 'entry_type', 'status', 'category', 'notes', 'project_id', 'created_at')
         before = previous or {}
         changes = {key: item[key] for key in fields if key in item and item.get(key) != before.get(key)}
@@ -149,8 +150,8 @@ def register(app):
                 changes['attachment:' + aid] = attached
         for aid in old_attachments.keys() - new_attachments.keys():
             changes['attachment:' + aid] = None
-        if changes:
-            return ledger.patch('entry', item['id'], changes)
+        if changes or operation_id is not None:
+            return ledger.patch('entry', item['id'], changes, operation_id=operation_id)
         return ledger.get('entry', item['id'])
 
     def materialize():
@@ -197,6 +198,9 @@ def register(app):
         return path
 
     def read(item_id):
+        if isinstance(item_id, str) and item_id in unprojected:
+            materialize()
+            unprojected.discard(item_id)
         path = record_path(item_id)
         if not path.is_file():
             raise ValueError('费用条目不存在')
@@ -243,7 +247,7 @@ def register(app):
             entity = ledger.get('entry', item['id'])
             return {**item, 'sync_heads': entity['heads'] if entity else [], 'sync_conflicts': entity['conflicts'] if entity else {}}
 
-    def save(params):
+    def save(params, prepare_only=False):
         with lock:
             previous = read(params['id']) if params.get('id') else None
             if previous:
@@ -273,6 +277,8 @@ def register(app):
             project = ledger.get('project', item['project_id'])
             if not project or project['deleted'] or project.get('archived') and (not previous or previous['project_id'] != item['project_id']):
                 raise ValueError('请选择有效且未归档的项目')
+            if prepare_only:
+                return item, previous
             if previous and all(item[key] == previous.get(key) for key in ('title', 'date', 'amount', 'currency', 'entry_type', 'status', 'category', 'notes', 'project_id')):
                 return copy.deepcopy(previous)
             item.update(revision=item['revision'] + 1, updated_at=time.time())
@@ -538,6 +544,132 @@ def register(app):
             if kind not in KINDS:
                 raise ValueError('附件类型请选择发票、收据、支付记录或其他')
             return app.jobs.submit('expenses.attach', {'id': item['id'], 'revision': item['revision'], 'paths': list(paths), 'kind': kind})
+
+    def commit_job(job):
+        params = job.params
+        try:
+            request_id = uuid.UUID(params.get('request_id', '')).hex
+        except (ValueError, TypeError, AttributeError):
+            raise ValueError('保存请求标识无效') from None
+        operation_id = uuid.uuid5(uuid.NAMESPACE_URL, 'wintoolbox-expense-commit/' + request_id).hex
+        digest = hashlib.sha256(json.dumps(params, sort_keys=True, ensure_ascii=False, allow_nan=False).encode()).hexdigest()
+        intents = root / 'commits'
+        no_links(intents, root)
+        intents.mkdir(exist_ok=True)
+        intent_path = intents / (request_id + '.json')
+        no_links(intent_path, root)
+        additions, removals = params.get('attachments_add', []), params.get('attachments_remove', [])
+        if (not isinstance(additions, list) or len(additions) > 100 or not isinstance(removals, list)
+                or any(not isinstance(aid, str) for aid in removals) or len(removals) != len(set(removals))
+                or any(not isinstance(a, dict) or set(a) != {'path', 'kind'} or not isinstance(a['path'], str)
+                       or not isinstance(a['kind'], str) or a['kind'] not in KINDS for a in additions)):
+            raise ValueError('附件保存参数无效')
+
+        def recover(entry_id):
+            if hasattr(job, 'mark_committed'):
+                job.mark_committed()
+            materialize()
+            unprojected.discard(entry_id)
+            ledger.on_change()
+            app.emit('expenses.changed', id=entry_id)
+            return {'entry': get({'id': entry_id})}
+
+        with app.data_lock, lock:
+            if intent_path.exists():
+                intent = json.loads(intent_path.read_text('utf-8'))
+                if intent['digest'] != digest:
+                    raise ValueError('保存内容已变化，请使用新的请求标识')
+                if operation_id in ledger.operations:
+                    return recover(intent['entry_id'])
+            item, previous = save(params, prepare_only=True)
+            if not previous:
+                item['id'] = uuid.uuid5(uuid.NAMESPACE_URL, 'wintoolbox-expense-entry/' + request_id).hex
+            for aid in removals:
+                selected(item, aid)
+            atomic_json(intent_path, {'digest': digest, 'entry_id': item['id']})
+        created = []
+        committed = False
+        with tempfile.TemporaryDirectory(prefix='.commit-', dir=root) as directory:
+            staged = []
+            total = 0
+            try:
+                for index, addition in enumerate(additions):
+                    job.check_cancelled()
+                    source = Path(addition['path']).expanduser().absolute()
+                    no_links(source)
+                    suffix = source.suffix.lower()
+                    if not source.is_file() or suffix not in TYPES:
+                        raise ValueError('请选择已有的 PDF、PNG、JPEG、WEBP 或 OFD 文件')
+                    before = source.stat()
+                    if not 0 < before.st_size <= MAX_FILE_BYTES:
+                        raise ValueError('单个附件必须非空且不超过 50 MiB')
+                    total += before.st_size
+                    if total > MAX_BATCH_BYTES:
+                        raise ValueError('单批附件不能超过 200 MiB')
+                    verify_type(source, suffix)
+                    aid = uuid.uuid5(uuid.UUID(request_id), str(index)).hex
+                    temporary = Path(directory) / (aid + suffix)
+                    sha, count = hashlib.sha256(), 0
+                    with source.open('rb') as incoming, temporary.open('xb') as output:
+                        while block := incoming.read(1024 * 1024):
+                            job.check_cancelled()
+                            count += len(block)
+                            if count > before.st_size:
+                                raise ValueError('复制期间源附件发生变化')
+                            sha.update(block)
+                            output.write(block)
+                    no_links(source)
+                    after = source.stat()
+                    if count != before.st_size or (before.st_mtime_ns, before.st_ino) != (after.st_mtime_ns, after.st_ino):
+                        raise ValueError('复制期间源附件发生变化')
+                    verify_type(temporary, suffix)
+                    staged.append({'id': aid, 'original_name': source.name, 'kind': addition['kind'], 'size': count,
+                                   'sha256': sha.hexdigest(), 'relative_path': f'attachments/{item["id"]}/{aid}{suffix}', 'created_at': time.time()})
+                with app.data_lock, lock:
+                    if operation_id in ledger.operations:
+                        return recover(item['id'])
+                    if previous:
+                        expect(read(item['id']), {'revision': previous['revision']})
+                    elif ledger.get('entry', item['id']):
+                        raise ValueError('条目标识已存在，请重新打开编辑器')
+                    project = ledger.get('project', item['project_id'])
+                    if not project or project['deleted'] or project.get('archived') and (not previous or previous['project_id'] != item['project_id']):
+                        raise ValueError('请选择有效且未归档的项目')
+                    job.check_cancelled()
+                    for attached in staged:
+                        target = owned_path(item['id'], attached)
+                        target.parent.mkdir(parents=True, exist_ok=True)
+                        if target.exists():
+                            if hashlib.sha256(target.read_bytes()).hexdigest() != attached['sha256']:
+                                raise ValueError('附件保存位置已有不同文件')
+                        else:
+                            with target.open('xb') as output, (Path(directory) / target.name).open('rb') as incoming:
+                                created.append(target)
+                                while block := incoming.read(1024 * 1024):
+                                    job.check_cancelled()
+                                    output.write(block)
+                    item['attachments'] = [a for a in item['attachments'] if a['id'] not in removals] + staged
+                    item.update(revision=item['revision'] + 1, updated_at=time.time())
+                    # One immutable operation publishes fields, additions and removals together.
+                    job.check_cancelled()
+                    unprojected.add(item['id'])
+                    journal(item, previous, operation_id=operation_id)
+                    committed = True
+                    if hasattr(job, 'mark_committed'):
+                        job.mark_committed()
+                    atomic_json(record_path(item['id']), item)
+                    unprojected.discard(item['id'])
+                    app.emit('expenses.changed', id=item['id'], month=item['date'][:7])
+                    return {'entry': get({'id': item['id']})}
+            finally:
+                if not committed and operation_id not in ledger.operations:
+                    unprojected.discard(item['id'])
+                    for target in created:
+                        no_links(target, root)
+                        target.unlink(missing_ok=True)
+
+    app.jobs.register('expenses.commit', commit_job)
+    app.register('expenses.commit', lambda params: app.jobs.submit('expenses.commit', params))
 
     app.jobs.register('expenses.attach', attach_job)
     for name, handler in (('list', listing), ('get', get), ('save', save), ('attach', attach), ('attachment', attachment_get)):
