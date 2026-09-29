@@ -131,3 +131,4 @@ Compress-Archive -LiteralPath $taskReleasePortable -DestinationPath $taskPortabl
     [PSCustomObject]@{ File = [IO.Path]::GetFileName($_.Path); Hash = $_.Hash }
 } | ConvertTo-Json | Set-Content -LiteralPath "$taskDist/SHA256SUMS.json" -Encoding utf8
 Write-Output "打包完成：$taskDist"
+exit 0
