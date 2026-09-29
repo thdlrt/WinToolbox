@@ -1,3 +1,4 @@
+import { visiblePolling } from './visiblePolling';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { errorText, rpc } from './api';
 import { useApp } from './context';
@@ -30,9 +31,9 @@ export default function LedgerSync({ onSynced }: { onSynced: () => void }) {
   useEffect(() => {
     if (!connected) return;
     let alive = true;
-    const read = () => void refresh().catch(reason => { if (alive) setFailure(errorText(reason)); });
-    read(); const timer = setInterval(read, 5000);
-    return () => { alive = false; clearInterval(timer); };
+    const read = () => refresh().catch(reason => { if (alive) setFailure(errorText(reason)); });
+    const stopPolling = visiblePolling(read, 5000);
+    return () => { alive = false; stopPolling(); };
   }, [connected, refresh]);
   const review = async () => {
     setBusy(true); setFailure('');

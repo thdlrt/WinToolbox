@@ -1,3 +1,4 @@
+import { visiblePolling } from '../visiblePolling';
 import {useEffect,useState,type FormEvent} from 'react';
 import {rpc,errorText,type Job} from '../api';
 import {useApp} from '../context';
@@ -20,7 +21,7 @@ export default function FnConnectPage(){
  const last=tasks[0];
  const probe=(tasks.find(j=>j.tool==='fnconnect.probe'&&j.status==='completed') as (Job&{result?:Probe})|undefined)?.result;
  const state=info?.state,online=state?.phase==='connected';
- useEffect(()=>{if(!backend)return;let live=true;const refresh=async()=>{try{const r=await rpc<Info>('fnconnect.status');if(live)setInfo(r);}catch(e){if(live)setFailure(errorText(e));}};void refresh();const timer=setInterval(refresh,2000);return()=>{live=false;clearInterval(timer);};},[backend]);
+ useEffect(()=>{if(!backend)return;let live=true;const refresh=async()=>{try{const r=await rpc<Info>('fnconnect.status');if(live)setInfo(r);}catch(e){if(live)setFailure(errorText(e));}};const stopPolling=visiblePolling(refresh,4000);return()=>{live=false;stopPolling();};},[backend]);
  async function action(method:string){if(busy||running)return;setBusy(true);setFailure('');const credentials=method==='connect'?{origin,scope,username,password,remember}:{};if(method==='connect'&&!password&&!hasSaved){setFailure('请填写飞牛密码后重新连接。');setBusy(false);return;}try{const job=await rpc<Job>('fnconnect.'+method,credentials);track(job,'操作已开始。');}catch(e){setFailure(errorText(e));}finally{setBusy(false);}}
  useEffect(()=>{if(online){setPassword('');void rpc<typeof saved>('fnconnect.profile').then(setSaved).catch(e=>setFailure(errorText(e)));}},[online]);
  const disabled=!backend||busy||!!running;

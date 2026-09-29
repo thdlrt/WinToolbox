@@ -2,14 +2,22 @@ import { useEffect, useRef, useState } from 'react';
 import { RefreshCw } from 'lucide-react';
 import { errorText, rpc } from './api';
 import { useApp } from './context';
+import { visiblePolling } from './visiblePolling';
 import { cx } from './ui';
-import { dataSyncError, dataSyncTitle, type DataSyncStatus } from './dataSyncState';
+import { dataSyncError, dataSyncTitle, observeDataSyncCompletion, type DataSyncStatus } from './dataSyncState';
 
 export default function DataSyncIndicator() {
-  const { connected, navigate, error } = useApp();
+  const { connected, navigate, error, success } = useApp();
   const [status, setStatus] = useState<DataSyncStatus>();
   const [failure, setFailure] = useState('');
   const [busy, setBusy] = useState(false);
+  const completedSync = useRef<number | null | undefined>(undefined);
+  useEffect(() => {
+    if (!connected || !status) return;
+    const completion = observeDataSyncCompletion(completedSync.current, status);
+    completedSync.current = completion.lastSync;
+    if (completion.notify) success('数据同步完成');
+  }, [connected, status, success]);
   const lastSync = useRef<number | null | undefined>(undefined);
   useEffect(() => { if (status && lastSync.current !== undefined && status.last_sync !== lastSync.current) window.dispatchEvent(new Event('toolbox-data-synced')); if (status) lastSync.current = status.last_sync; }, [status]);
   const mounted = useRef(false), manual = useRef(false), polling = useRef(false), serial = useRef(0);
@@ -18,7 +26,7 @@ export default function DataSyncIndicator() {
     return () => { mounted.current = false; serial.current++; };
   }, []);
   useEffect(() => {
-    if (!connected) return;
+    if (!connected) { setStatus(undefined); completedSync.current = undefined; return; }
     let disposed = false;
     const refresh = async () => {
       if (manual.current || polling.current) return;
@@ -28,8 +36,8 @@ export default function DataSyncIndicator() {
       catch (reason) { if (!disposed && request === serial.current) setFailure(errorText(reason)); }
       finally { polling.current = false; }
     };
-    void refresh(); const timer = setInterval(() => void refresh(), 4000);
-    return () => { disposed = true; clearInterval(timer); };
+    const stopPolling = visiblePolling(refresh, 4000);
+    return () => { disposed = true; stopPolling(); };
   }, [connected]);
   const sync = async () => {
     if (!connected || busy || status?.syncing) return;

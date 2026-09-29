@@ -1,6 +1,6 @@
 [package]
 name = "wintoolbox"
-version = "0.4.1"
+version = "0.5.0"
 description = "Windows 语音与效率工具箱"
 license = "MIT"
 repository = "https://github.com/thdlrt/WinToolbox"
@@ -17,3 +17,7 @@ rfd = "0.15"
 tauri-plugin-single-instance = "2"
 tauri-plugin-global-shortcut = "2"
 drag = "2.1.1"
+
+[target.'cfg(windows)'.dependencies]
+webview2-com = "0.38.2"
+windows-core = "0.61"

@@ -1,6 +1,12 @@
 html[data-window="orb"],html[data-window="orb"] body,html[data-window="orb"] #root{background:transparent!important;overflow:hidden!important;width:100%;height:100%;margin:0;min-width:0;color:#eaf0ff;color-scheme:dark}
 .orb-stage{--ease:cubic-bezier(.2,.82,.2,1);--spring:cubic-bezier(.22,1.12,.36,1);--center-x:var(--home-x);--center-y:var(--home-y);--dx:calc(var(--home-x) - var(--menu-x));--dy:calc(var(--home-y) - var(--menu-y));position:relative;width:100vw;height:100vh;overflow:hidden;user-select:none;font-family:Inter,"Segoe UI","Microsoft YaHei",sans-serif;opacity:0}
 .orb-stage.is-ready{opacity:1}.orb-stage.is-expanded{--center-x:var(--menu-x);--center-y:var(--menu-y)}
+.orb-stage:not(.is-expanded){--center-x:calc(var(--home-x) + var(--shift-x,0px));--center-y:calc(var(--home-y) + var(--shift-y,0px))}
+.orb-stage.is-resting .orb-core{opacity:.28;filter:brightness(.65);background:none;border-color:transparent;box-shadow:none}
+.orb-stage.is-resting .orb-core::before{opacity:0}
+.orb-stage.is-resting .orb-reading,.orb-stage.is-resting .orb-caption,.orb-stage.is-resting .orb-track{opacity:0}
+.orb-stage.is-resting .orb-ring{stroke-width:2}
+.orb-stage.is-sleeping .orb-core{opacity:0}
 .orb-core{position:absolute;z-index:2;left:var(--center-x);top:var(--center-y);width:78px;height:78px;transform:translate(-50%,-50%) scale(1);border-radius:50%;background:radial-gradient(circle at 30% 20%,#35405a,#111b30 72%);border:1px solid #ffffff28;color:#f4f8ff;box-shadow:inset 0 1px 1px #ffffff38;display:flex;align-items:center;justify-content:center;cursor:grab;touch-action:none;padding:0;transition:left .26s var(--ease),top .26s var(--ease),transform .24s var(--spring),opacity .16s ease,box-shadow .18s}
 .orb-core::before{content:"";position:absolute;inset:-22px;border-radius:50%;z-index:-1;background:radial-gradient(circle,#16314738 30%,#16314718 48%,transparent 70%);pointer-events:none}
 .orb-core:hover{box-shadow:inset 0 1px 1px #ffffff38,0 0 0 3px #5cdaca23}.orb-core:active{cursor:grabbing;transform:translate(-50%,-50%) scale(.95)}.is-expanded .orb-core{cursor:pointer}.has-panel .orb-core{opacity:0;transform:translate(-50%,-50%) scale(.65);pointer-events:none}

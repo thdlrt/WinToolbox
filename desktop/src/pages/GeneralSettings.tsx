@@ -66,7 +66,7 @@ export default function GeneralSettings() {
       <Section title="启动">
         <CheckField
           label="开机自启"
-          hint="登录 Windows 后自动打开工具箱，仅对当前用户生效。"
+          hint="登录 Windows 后显示悬浮球，主界面留在托盘。点击托盘图标可打开工具箱。"
           checked={startup?.enabled || false}
           disabled={!connected || !startup || busy}
           onChange={(v) => void toggle(v)}

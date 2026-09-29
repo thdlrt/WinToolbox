@@ -122,7 +122,7 @@ class ModelSetup:
             if mode == "local":
                 preset = preset_by_id(params.get("preset", current.get("preferences", {}).get("local_preset", "light")))
                 prefs.update({"local_preset": preset["id"], **{key: preset[key] for key in ("asr_engine", "asr_model", "asr_device", "asr_compute_type")}})
-                patch["roles"] = {role: {"provider_id": "local", "model": preset["llm_model"]} for role in ("chat", "translate", "vision")}
+                patch["roles"] = {role: {"provider_id": "local", "model": preset["llm_model"]} for role in ("chat", "translate", "quick_translate", "vision")}
                 patch["roles"].update({"embedding": {"provider_id": "local", "model": EMBEDDING_MODEL}, "transcribe": {"provider_id": "local", "model": preset["asr_model"]}, "live_asr": {"provider_id": "local", "model": preset["asr_model"]}, "tts": {"provider_id": "local", "model": "cosyvoice"}})
             else:
                 providers = current["providers"]

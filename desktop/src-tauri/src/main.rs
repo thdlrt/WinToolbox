@@ -1,5 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 mod orb;
+mod webview_memory;
+mod quick_menu;
 use serde::Deserialize;
 use serde_json::{json,Value};
 use std::{collections::HashMap,fs,io::{BufRead,BufReader,Write},path::{Path,PathBuf},process::{Child,ChildStdin,Command,Stdio},sync::{Arc,Mutex,mpsc,atomic::{AtomicBool,AtomicU64,Ordering}},time::Duration};
@@ -221,13 +223,17 @@ fn main(){
         let existing=std::env::var("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS").unwrap_or_default();
         std::env::set_var("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS",format!("{} --disable-gpu",existing));
     }
-    use tauri::menu::{Menu,MenuItem};use tauri::tray::TrayIconBuilder;
+    use tauri::menu::{Menu,MenuItem,CheckMenuItem};use tauri::tray::TrayIconBuilder;
     use tauri_plugin_global_shortcut::{GlobalShortcutExt,ShortcutState};
-    let app=tauri::Builder::default().manage(Bridge::default()).manage(CaptionsWindow::default()).manage(orb::OrbState::default())
-      .plugin(tauri_plugin_single_instance::init(|app,args,_|{let _=orb::open(app,"home");relay_launch(app,args);}))
+    let app=tauri::Builder::default().manage(Bridge::default()).manage(CaptionsWindow::default()).manage(orb::OrbState::default()).manage(quick_menu::QuickState::default())
+      .plugin(tauri_plugin_single_instance::init(|app,args,_|{if args.iter().any(|a|a=="--quit"){app.exit(0);return}if !args.iter().any(|a|a=="--silent"){let _=orb::open(app,"home");}relay_launch(app,args);}))
       .plugin(tauri_plugin_global_shortcut::Builder::new().build())
-      .invoke_handler(tauri::generate_handler![rpc,orb::set_orb,orb::orb_resize,orb::orb_save_position,orb::orb_action,drag_files,install_update,pick_files,pick_directory,pick_save,app_paths,open_path,open_external,save_course_file,set_overlay,get_captions_window,set_captions_window,set_captions_click_through])
+      .invoke_handler(tauri::generate_handler![rpc,quick_menu::quick_settings,quick_menu::quick_snapshot,quick_menu::quick_hide,quick_menu::quick_copy,orb::set_orb,orb::orb_resize,orb::orb_save_position,orb::orb_action,drag_files,install_update,pick_files,pick_directory,pick_save,app_paths,open_path,open_external,save_course_file,set_overlay,get_captions_window,set_captions_window,set_captions_click_through])
       .setup(|app|{
+          webview_memory::watch(app.handle().clone());
+          if !std::env::args().any(|a|a=="--silent") {
+              if let Some(w)=app.get_webview_window("main"){w.show()?;}
+          }
           let orb_handle=app.handle().clone();
           tauri::async_runtime::spawn(async move{let _=orb::set_orb(orb_handle,true).await;});
           if let Some(main)=app.get_webview_window("main") {
@@ -245,8 +251,15 @@ fn main(){
           let captions=MenuItem::with_id(app,"captions","显示并解锁字幕窗",true,None::<&str>)?;
           let stop_captions=MenuItem::with_id(app,"stop_captions","停止实时字幕",true,None::<&str>)?;
           let ball=MenuItem::with_id(app,"orb","显示工具箱悬浮球",true,None::<&str>)?;
-          let menu=Menu::with_items(app,&[&show,&ball,&overlay,&captions,&stop_captions,&quit])?;
-          let mut tray=TrayIconBuilder::new().tooltip("WinToolbox").menu(&menu).on_menu_event(|app,event|{match event.id.as_ref(){"show"=>{let _=orb::open(app,"home");},"orb"=>{let h=app.clone();tauri::async_runtime::spawn(async move{let _=orb::set_orb(h,true).await;});},"overlay"=>{let handle=app.clone();tauri::async_runtime::spawn(async move{let _=set_overlay(handle,true).await;});},"captions"=>{let handle=app.clone();tauri::async_runtime::spawn(async move{let _=set_captions_window(handle,true).await;});},"stop_captions"=>{let handle=app.clone();std::thread::spawn(move||{let _=rpc_blocking(&handle,&handle.state::<Bridge>(),"captions.stop".into(),json!({}));});},"quit"=>app.exit(0),_=>{}}});
+          let quick=CheckMenuItem::with_id(app,"quick-toggle","启用长按快捷菜单",true,true,None::<&str>)?;
+          let quick_settings=MenuItem::with_id(app,"quick-settings","快捷菜单设置…",true,None::<&str>)?;
+          *app.state::<quick_menu::QuickState>().toggle.lock().unwrap()=Some(quick.clone());
+          let menu=Menu::with_items(app,&[&show,&quick,&quick_settings,&ball,&overlay,&captions,&stop_captions,&quit])?;
+          let mut tray=TrayIconBuilder::new().tooltip("WinToolbox").menu(&menu).on_menu_event(|app,event|{match event.id.as_ref(){"quick-settings"=>{let _=orb::open(app,"quick-settings");},"quick-toggle"=>{let a=app.clone();tauri::async_runtime::spawn(async move{if let Ok(mut settings)=quick_menu::quick_settings(a.clone(),None).await{settings["enabled"]=json!(settings["enabled"]!=true);let _=quick_menu::quick_settings(a,Some(settings)).await;}});},"show"=>{let _=orb::open(app,"home");},"orb"=>{let h=app.clone();tauri::async_runtime::spawn(async move{let _=orb::set_orb(h,true).await;});},"overlay"=>{let handle=app.clone();tauri::async_runtime::spawn(async move{let _=set_overlay(handle,true).await;});},"captions"=>{let handle=app.clone();tauri::async_runtime::spawn(async move{let _=set_captions_window(handle,true).await;});},"stop_captions"=>{let handle=app.clone();std::thread::spawn(move||{let _=rpc_blocking(&handle,&handle.state::<Bridge>(),"captions.stop".into(),json!({}));});},"quit"=>app.exit(0),_=>{}}});
+          quick_menu::start(app.handle());
+          tray=tray.show_menu_on_left_click(false).on_tray_icon_event(|tray,event|{
+              if matches!(event,tauri::tray::TrayIconEvent::Click{button:tauri::tray::MouseButton::Left,button_state:tauri::tray::MouseButtonState::Up,..}){let _=orb::open(tray.app_handle(),"home");}
+          });
           if let Some(icon)=app.default_window_icon(){tray=tray.icon(icon.clone())}tray.build(app)?;
           for (shortcut,action) in [("Ctrl+Alt+Space","answer"),("Ctrl+Alt+Escape","cancel"),("Ctrl+Alt+ArrowLeft","previous")]{
               let a=action.to_string();let _=app.global_shortcut().on_shortcut(shortcut,move|app,_,event|{if event.state==ShortcutState::Pressed{let _=app.emit("backend-event",json!({"type":"hotkey","action":a}));if a!="previous"{let h=app.clone();let m=if a=="answer"{"live.answer"}else{"live.cancel"}.to_string();std::thread::spawn(move||{let _=rpc_blocking(&h,&h.state::<Bridge>(),m,json!({}));});}}});
@@ -266,6 +279,9 @@ fn main(){
     if !cfg!(debug_assertions) {
         let handle=app.handle().clone();
         std::thread::spawn(move||{
+            if let Err(message)=rpc_blocking(&handle,&handle.state::<Bridge>(),"general.startup.migrate".into(),json!({})) {
+                eprintln!("静默自启迁移失败: {message}");
+            }
             if let Err(message)=rpc_blocking(&handle,&handle.state::<Bridge>(),"relay.initialize_menu".into(),json!({})) {
                 eprintln!("文件中转站菜单注册失败: {message}");
             }

@@ -31,10 +31,11 @@ def executable():
     return path.resolve()
 
 
-def startup(enabled=None):
+def startup(enabled=None, migrate=False):
     import winreg
     exe = executable()
-    command = '"' + str(exe) + '"'
+    legacy = '"' + str(exe) + '"'
+    command = legacy + ' --silent'
     if enabled is not None:
         if not isinstance(enabled, bool):
             raise ValueError('自启设置必须为布尔值')
@@ -49,13 +50,18 @@ def startup(enabled=None):
             actual = winreg.QueryValueEx(key, 'WinToolbox')[0]
     except FileNotFoundError:
         actual = ''
+    if migrate and actual == legacy:
+        # Upgrade only this exact installation's already enabled Run entry.
+        with winreg.CreateKeyEx(winreg.HKEY_CURRENT_USER, RUN_KEY, 0, winreg.KEY_SET_VALUE) as key:
+            winreg.SetValueEx(key, 'WinToolbox', 0, winreg.REG_SZ, command)
+        actual = command
     disabled = False
     try:
         with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r'Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run') as key:
             value = winreg.QueryValueEx(key, 'WinToolbox')[0]
             disabled = bool(value and value[0] == 3)
     except FileNotFoundError: pass
-    return {'enabled': actual == command, 'disabled_by_windows': disabled, 'path': str(exe)}
+    return {'enabled': actual in (legacy, command), 'silent': actual == command, 'disabled_by_windows': disabled, 'path': str(exe)}
 
 
 def release_info(data, portable, current=__version__):
@@ -176,6 +182,7 @@ def install_script(folder, exe, portable, pid, package):
 
 def register(app):
     app.register('general.startup.get', lambda p: startup())
+    app.register('general.startup.migrate', lambda p: startup(migrate=True))
     app.register('general.startup.set', lambda p: startup(p['enabled']))
     app.register('updates.check', lambda p: app.jobs.submit('updates.check', {}))
     app.jobs.register('updates.check', lambda job: check())

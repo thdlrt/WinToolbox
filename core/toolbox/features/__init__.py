@@ -2,6 +2,8 @@
 
 
 def register_all(app):
+    from . import quick_menu
+    quick_menu.register(app)
     from . import orb_settings
     orb_settings.register(app)
     from . import system_memory
@@ -10,6 +12,8 @@ def register_all(app):
     relay.register(app)
     from . import filesync
     filesync.register(app)
+    from . import feishu_bridge
+    feishu_bridge.register(app)
     from . import backups, codex, files, knowledge, plugins, practice, webdav, expenses, phonetics, shizuku, fnconnect, gpu_guard, project_memory, general
     for module in (codex, files, plugins, knowledge, backups, practice, webdav, expenses, phonetics, shizuku, fnconnect, gpu_guard, project_memory, general):
         module.register(app)

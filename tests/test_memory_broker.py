@@ -1,7 +1,7 @@
 from pathlib import Path
 from types import SimpleNamespace
 import pytest
-from toolbox.features.memory_broker import PersistentMemoryCleaner, elevate
+from toolbox.features.memory_broker import PersistentMemoryCleaner, elevate, install_failure
 
 SID = 'S-1-5-21-100-200-300-1001'
 
@@ -109,6 +109,13 @@ def test_framework_crash_reports_exit_and_logs_diagnostics(monkeypatch, caplog):
         module.invoke('cleaner.exe', '--identity')
     assert 'System.ArgumentException' in caplog.text
     assert '--identity' in caplog.text
+
+
+def test_elevated_install_failure_identifies_step_and_windows_error():
+    assert '复制清理组件失败' in install_failure(0x60040002)
+    assert '0x0002' in install_failure(0x60040002)
+    assert '注册 Windows 计划任务失败' in install_failure(0x60070002)
+    assert '0x80070002' in install_failure(0x80070002)
 
 
 def test_automatic_cleanup_never_installs_even_if_component_disappeared():

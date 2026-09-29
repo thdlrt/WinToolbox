@@ -1,3 +1,4 @@
+import { visiblePolling } from '../visiblePolling';
 import { useEffect, useState } from 'react';
 import { RefreshCw, Sparkles } from 'lucide-react';
 import { errorText, rpc, type Job } from '../api';
@@ -47,8 +48,8 @@ export default function SystemMemoryPage() {
       const failed = results.find(value => value.status === 'rejected');
       setReadFailure(failed?.status === 'rejected' ? errorText(failed.reason) : '');
     };
-    void read(); const timer = setInterval(() => void read(), 2000);
-    return () => { disposed = true; clearInterval(timer); };
+    const stopPolling = visiblePolling(read, 2000);
+    return () => { disposed = true; stopPolling(); };
   }, [connected]);
   const save = async () => {
     const invalid = memorySettingsValidation(config); if (invalid) { setFailure(invalid); return; }

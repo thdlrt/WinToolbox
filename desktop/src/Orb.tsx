@@ -3,6 +3,8 @@ import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
 import { ArrowUpToLine, Check, LoaderCircle, Minus, X } from 'lucide-react';
 import { errorText, isDesktop, native, rpc, subscribe, type Job } from './api';
 import MemoryRocket from './MemoryRocket';
+import { visiblePolling } from './visiblePolling';
+import { OrbProtection, type OrbProtectionState } from './orbProtection';
 import { defaultOrbActions, orbActions, type OrbPreferences } from './orbActions';
 import { OrbMotion, ORB_MOTION_MS, type OrbPoint } from './orbMotion';
 import './orb.css';
@@ -16,6 +18,11 @@ const active = (job: OrbJob) => ['queued', 'running', 'cancelling'].includes(job
 const defaultLayout: OrbPoint = { x: 256, y: 256, menu_x: 256, menu_y: 256 };
 
 export default function Orb() {
+  const [protection, setProtection] = useState<OrbProtectionState>({ x: 0, y: 0, dim: false, asleep: false });
+  const [autoHide, setAutoHide] = useState(true);
+  const lastPointerActivity = useRef(0);
+  const [hovered, setHovered] = useState(false);
+  const protectionController = useRef<OrbProtection | undefined>(undefined);
   const [memory, setMemory] = useState<Memory>();
   const [captionsActive, setCaptionsActive] = useState(false);
   const [mode, setMode] = useState<Mode>('idle');
@@ -45,6 +52,16 @@ export default function Orb() {
   const userMoving = useRef(false);
   const pointer = useRef<{ x: number; y: number; moved: boolean } | undefined>(undefined);
   const ignoreClick = useRef(false);
+  useEffect(() => {
+    const controller = new OrbProtection(setProtection);
+    protectionController.current = controller;
+    return () => controller.dispose();
+  }, []);
+  useEffect(() => {
+    const update = () => protectionController.current?.idle(ready && !expanded && !working && !feedback && !document.hidden, autoHide, !hovered);
+    update(); document.addEventListener('visibilitychange', update);
+    return () => { document.removeEventListener('visibilitychange', update); protectionController.current?.dispose(); };
+  }, [ready, expanded, working, feedback, hovered, autoHide]);
   const dropSignature = useRef({ key: '', time: 0 });
   const setBusy = (value: boolean) => { busy.current = value; setWorking(value); };
   const expand = (next: Mode) => {
@@ -121,19 +138,19 @@ export default function Orb() {
   useEffect(() => {
     if (!isDesktop()) return;
     let disposed = false; let off: (() => void) | undefined;
-    const read = () => void rpc<OrbPreferences>('orb.settings.get').then(value => { if (!disposed) setShortcuts(value.actions); }).catch(error => { if (!disposed) setMessage(errorText(error)); });
+    const read = () => void rpc<OrbPreferences>('orb.settings.get').then(value => { if (!disposed) { setShortcuts(value.actions); setAutoHide(value.oled_auto_hide ?? true); } }).catch(error => { if (!disposed) setMessage(errorText(error)); });
     read();
     void subscribe(event => { if (event.type === 'orb.settings.changed') read(); }).then(fn => { if (disposed) fn(); else off = fn; }).catch(error => setMessage(errorText(error)));
     return () => { disposed = true; off?.(); };
   }, []);
   useEffect(() => {
-    if (!isDesktop()) return;
+    if (!isDesktop() || protection.asleep) return;
     let disposed = false;
-    const read = () => void rpc<Memory>('memory.status').then(value => { if (!disposed) setMemory(value); }).catch(() => {});
-    const captions = () => void rpc<{ active: boolean }>('captions.state').then(value => { if (!disposed) setCaptionsActive(value.active); }).catch(() => {});
-    read(); captions(); const captionTick = setInterval(captions, 4000); const tick = setInterval(read, 2000);
-    return () => { disposed = true; clearInterval(tick); clearInterval(captionTick); };
-  }, []);
+    const read = () => rpc<Memory>('memory.status').then(value => { if (!disposed) setMemory(value); }).catch(() => {});
+    const captions = () => rpc<{ active: boolean }>('captions.state').then(value => { if (!disposed) setCaptionsActive(value.active); }).catch(() => {});
+    const stopPolling = visiblePolling(() => Promise.allSettled([read(), captions()]), 4000);
+    return () => { disposed = true; stopPolling(); };
+  }, [protection.asleep]);
   useEffect(() => {
     if (!isDesktop()) return;
     const w = getCurrentWebviewWindow(); let disposed = false; const offs: (() => void)[] = [];
@@ -164,7 +181,7 @@ export default function Orb() {
         } else void start('relay.upload', { paths, path: '', move: false });
       }
     }));
-    attach(w.listen('orb-reset', () => expand('idle')));
+    attach(w.listen('orb-reset', () => { expand('idle'); protectionController.current?.wake(); }));
     attach(w.onScaleChanged(() => {
       void native.orbSavePosition().then(point => { if (!disposed) setLayout(point); }).catch(error => setMessage(errorText(error)));
     }));
@@ -214,8 +231,11 @@ export default function Orb() {
   const panel = expanded && ['drop', 'job', 'result'].includes(mode);
   const showing = (value: Mode) => expanded && mode === value;
   const percent = working ? Math.max(0, Math.min(100, job?.progress || 0)) : memory?.percent || 0;
-  const coordinates = { '--home-x': `${layout.x}px`, '--home-y': `${layout.y}px`, '--menu-x': `${layout.menu_x ?? 256}px`, '--menu-y': `${layout.menu_y ?? 256}px` } as CSSProperties;
-  return <main className={`orb-stage ${expanded ? 'is-expanded' : ''} ${ready ? 'is-ready' : ''} ${panel ? 'has-panel' : ''} feedback-${feedback} ${working ? 'is-working' : ''}`} style={coordinates} aria-label="工具箱悬浮球"
+  const coordinates = { '--home-x': `${layout.x}px`, '--home-y': `${layout.y}px`, '--shift-x': `${protection.x}px`, '--shift-y': `${protection.y}px`, '--menu-x': `${layout.menu_x ?? 256}px`, '--menu-y': `${layout.menu_y ?? 256}px` } as CSSProperties;
+  return <main className={`orb-stage ${protection.asleep ? 'is-sleeping' : ''} ${protection.dim ? 'is-resting' : ''} ${expanded ? 'is-expanded' : ''} ${ready ? 'is-ready' : ''} ${panel ? 'has-panel' : ''} feedback-${feedback} ${working ? 'is-working' : ''}`} style={coordinates} aria-label="工具箱悬浮球"
+    onPointerEnter={() => setHovered(true)} onPointerLeave={() => setHovered(false)}
+    onFocusCapture={() => protectionController.current?.wake()}
+    onPointerMove={() => { const now=performance.now(); if (now-lastPointerActivity.current>1000) { lastPointerActivity.current=now; protectionController.current?.wake(); } }}
     onPointerDown={event => { if (event.button === 0 && !(event.target as Element).closest('button,nav,section')) dismiss(); }}
     onContextMenu={event => { event.preventDefault(); expand(modeRef.current === 'context' ? 'idle' : 'context'); }}
     onKeyDown={event => { if (event.key === 'Escape') acknowledge(); }}>

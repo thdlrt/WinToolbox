@@ -17,6 +17,7 @@ Methods and result shapes:
 - tool media params {paths:[],output_dir?,engine:'api'|'faster-whisper'|'qwen-asr'|'sensevoice',model?,language?,translate:true,summary:false,summary_mode:'general'|'course'|'meeting'|'interview',diarize:false,burn:false,dub:false,enhance:false,tts_provider:'edge'|'qwen'|'cosyvoice',voice?,...}; all steps optional, artifact validation/checkpoints required.
 - media.probe {path}->probe; subtitles.load {path}->{segments:[{id,start,end,text,translation?,speaker?}]}; subtitles.save {path,segments}->{path}
 - codex.scan {home?,config_path?,cache_path?}->{models:[],current:{model,context},config_path,cache_path}; codex.preview {model,context,home?,...}->{before,after,hash,...}; codex.apply {model,context,expected_hash,home?,...}->{backup_path,...}; codex.backups {...}->{backups:[]}; codex.restore {backup_path,expected_hash,home?,...}->{...}
+- feishu.bridge.status {} -> {config,connected,last_error,last_event_at,recent:[{message_id,rule_id,status,reply_id,updated_at,detail,target_thread_id}]}; feishu.bridge.save {config} -> status; feishu.bridge.check {} -> {ok,lark,codex}; feishu.bridge.threads {} -> {threads:[{id,title,cwd}]}. Configuration is local at `data/feishu-bridge.json`, with message ID deduplication at `data/feishu-bridge.sqlite3`. Rules specify p2p/group, chat ID, optional group sender ID (required for p2p), mention requirement, accepted message types, target local Codex thread and prompt template. The listener starts with the toolbox backend and stops when the app exits. Status/job notifications are `feishu.bridge.status` and `feishu.bridge.job`.
 - files.preview {action:'move'|'translate',source_dir,dest_dir?,suffix?,recursive?,prefix_only?}->{plan_id,operations:[{source,target,status}]}; files.apply {plan_id}->{...}
 - plugins.list {}->{plugins:[]}; plugins.install {path}->{plugin}; plugins.enable {id,enabled}->{...}; plugins.uninstall {id}->{...}; plugins.run {id,params}->job. Package manifest {id,name,version,api_version:1,description,entrypoint,runtime:'python',permissions:[],ui?:{fields:[]}}. Support declarative fields and JSON output in v1, include working file-hash sample.
 - backups.export {path,include_media:true,include_models:false,password?,include_secrets:false}->job; backups.import {path,password?}->job. Atomic restore with validation, no external arbitrary paths.
@@ -100,6 +101,7 @@ To remove the helper, run elevated PowerShell: `Stop-Service WinToolboxTun; sc.e
 Rules/baselines/history use `filesync_rules` / `filesync_history` tables in the existing versioned engine SQLite database; no changes to the engine schema version are required for these additive tables. App restore initializes missing tables and disables automatic rules. App shutdown stops new poll jobs. All external writes run through background jobs and an execution gate; edits fail fast while a job owns the gate.
 # File relay (WebDAV inbox)
 
+
 `relay.get/save` read/write the local connection (`url`, `username`, `remote_path`, `download_dir`, write-only `password`). DPAPI ciphertext stays in `relay-connection.json`, excluded from ordinary backups and job records. Changing URL/account clears the old password; all saves rotate a configuration revision.
 
 `relay.test`, `relay.list {path}`, `relay.mkdir {path}`, `relay.upload {paths,path?,move?}`, `relay.download {paths}`, `relay.cleanup_preview {days}`, `relay.cleanup {token}` are background jobs. Paths inside the remote inbox are relative, slash-separated and traversal-checked. Upload is PUT-to-temporary then MOVE with Overwrite:F; move-local mode additionally downloads and hashes before removing a verified unchanged local file. Downloads publish without replacing existing local files. Upload returns uploaded/moved/error arrays for partial outcomes.
@@ -107,3 +109,19 @@ Rules/baselines/history use `filesync_rules` / `filesync_history` tables in the 
 Cleanup previews recursively enumerate files only; strong ETags and timestamps are required. Tokens are in-memory, revision-bound, single-use, valid for ten minutes. Execution rechecks metadata and uses conditional DELETE per file, retaining directories and concurrently modified files.
 
 `relay.context_menu {enabled?}` controls only HKCU WinToolboxRelay file/directory verbs. Native `--relay-upload <absolute paths...>` is handled on initial launch and by the single-instance callback, forwarded to `relay.enqueue {paths}` with copy-only semantics to the inbox root. `relay.open` emits navigation; `relay.pending` consumes the most recent cold-start request so a frontend that subscribes later still opens the correct page. `relay.*` jobs reject credential-shaped parameters; dedicated submission allowlists persisted fields.
+
+## 快捷菜单
+
+`quick.settings` / `quick.save` 读取和验证 `quick-menu.json`；桌面通过原生命令 `quick_settings {settings?}` 同步注册快捷键与保存，失败恢复原生配置。`quick.actions` 返回内置/自定义动作及触发条件。`quick.capture {text?,paths?,protected?,message?}` 建立最多 32 个、10 分钟有效的内存上下文；`quick.snapshot {id}` 返回选区、推荐动作、固定入口和临时结果。
+
+`quick.translate {id}` 与 `quick.run {id,action,token?}` 返回后台 Job；持久化参数仅含上下文 ID、动作及令牌。选区和翻译结果通过 snapshot 获取，不进入历史结果。`quick.preview {id}` 返回文件夹解散计划和校验令牌；执行再次核对文件状态，拒绝目标冲突、嵌套根、目录链接，不覆盖文件，仅删除空目录，出错尝试回滚并保留审计记录。
+
+翻译独立角色为 `quick_translate`，新配置默认阿里云 `qwen3.8-flash`，缺失角色时复用现有 dashscope 提供商；不覆盖已有功能分配。原生 `quick_snapshot`、`quick_hide`、`quick_copy {text}` 管理瞬态窗口及显式复制。选区由短生命周期 STA helper 获取，不模拟复制；窗口隐藏约 30 秒后销毁。自定义脚本上下文临时文件在 finally 中删除，输出最多读取 16000 字节，60 秒超时。使用与测试见 `docs/QUICK-MENU.md`。
+
+Feishu p2p routing: non-replies use the rule target; replies follow verified same-chat message ancestry and persistent `message_contexts` (app/chat/message → local Codex thread). Unknown sources may be recovered from unique successful bot-send execution receipts in local Codex history. Unknown/ambiguous replies fail without default fallback. Groups retain fixed targets. Existing jobs gain a nullable `target_thread_id`; no historical target is guessed from mutable rule settings.
+
+## 静默自启与悬浮球闲置保护
+
+Run/WinToolbox 写入当前可执行文件加 `--silent`。`general.startup.migrate` 仅将当前安装已启用的无参数旧命令升级，不启用关闭的自启、不改写其它安装、不修改 Windows StartupApproved 状态。主窗口创建为隐藏，手动启动才显示；重复静默启动不唤醒主窗口。静默启动显示悬浮球并保留托盘，左键托盘和常规二次启动可打开主窗口。
+
+悬浮球前端 OrbProtection 使用 20 秒暗色细环、每分钟 49 点微移和 5 分钟自动隐去，偏移不超过 12 logical px，不保存到 orb-position。`orb.settings.get/save` 增加 `oled_auto_hide`，缺失默认 true，旧客户端只保存 actions 时保留已有开关。隐去后停止读数轮询与移位计时器，保留原生唤醒区域；移入、拖入和 orb-reset 恢复。静止光标不阻止淡化，光标位于区域内时不移动点击目标。快捷菜单选区新增 same_language，目标语言本地判断在 capture/snapshot/translate 与执行时检查，不额外调用 API 检测语言。

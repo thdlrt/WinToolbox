@@ -1,5 +1,5 @@
 import { strict as assert } from 'node:assert';
-import { dataSyncTitle, dataSyncError, syncRelativeTime } from './dataSyncState.ts';
+import { dataSyncTitle, dataSyncError, observeDataSyncCompletion, syncRelativeTime } from './dataSyncState.ts';
 const ready={configured:true,syncing:false,last_sync:1000,error:null,services:[]};
 assert.equal(syncRelativeTime(1000,1005000),'刚刚');
 assert.equal(syncRelativeTime(1000,1120000),'2 分钟前');
@@ -18,3 +18,23 @@ assert.match(dataSyncTitle({...ready,last_sync:null}),/尚未同步/);
 console.log('PASS sync status seconds, relative time, busy, partial failure and connection errors');
 
 assert.match(dataSyncTitle({...ready,configured:false,services:[{id:'old',label:'旧服务',configured:false,error:'旧错误'}]}),/未配置/);
+
+let completion = observeDataSyncCompletion(undefined, ready);
+assert.deepEqual(completion,{lastSync:1000,notify:false},'startup historical sync is silent');
+completion = observeDataSyncCompletion(completion.lastSync, ready);
+assert.equal(completion.notify,false,'unchanged poll is silent');
+completion = observeDataSyncCompletion(completion.lastSync,{...ready,last_sync:1100,syncing:true});
+assert.equal(completion.notify,false,'running sync is not success');
+assert.equal(completion.lastSync,1000,'completion is still pending');
+completion = observeDataSyncCompletion(completion.lastSync,{...ready,last_sync:1100});
+assert.equal(completion.notify,true,'new completed sync notifies');
+assert.equal(observeDataSyncCompletion(completion.lastSync,{...ready,last_sync:1100}).notify,false,'completed sync notifies once');
+assert.equal(observeDataSyncCompletion(completion.lastSync,{...ready,last_sync:1050}).notify,false,'clock rollback cannot repeat old success');
+assert.equal(observeDataSyncCompletion(completion.lastSync,{...ready,last_sync:1200,error:'offline'}).notify,false,'failed aggregate never notifies');
+assert.equal(observeDataSyncCompletion(completion.lastSync,{...ready,last_sync:1200,services:[{configured:true,error:'offline'}]}).notify,false,'partial failure never notifies');
+assert.equal(observeDataSyncCompletion(completion.lastSync,{...ready,last_sync:1200,services:[{configured:true,syncing:true}]}).notify,false,'active service is not complete');
+assert.equal(observeDataSyncCompletion(completion.lastSync,{...ready,last_sync:1200,configured:false}).notify,false,'unconfigured never notifies');
+assert.equal(observeDataSyncCompletion(undefined,{...ready,last_sync:1200}).notify,false,'fresh connection historical state is silent');
+assert.equal(observeDataSyncCompletion(null,ready).notify,true,'first real sync after observing empty history notifies');
+assert.equal(observeDataSyncCompletion(1000,{...ready,last_sync:NaN}).notify,false);
+console.log('PASS completion notification baseline, one-shot success, partial failure, running, reconnect and clock rollback');

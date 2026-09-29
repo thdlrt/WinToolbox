@@ -7,6 +7,11 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
+# The resident backend uses NumPy for small audio buffers, not large BLAS jobs.
+# OpenBLAS otherwise reserves hundreds of MiB for its per-core thread buffers.
+# Apply before any optional audio import; preserve an explicit user override.
+os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
+
 from .app import App
 
 

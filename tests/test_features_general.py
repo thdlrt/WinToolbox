@@ -88,9 +88,19 @@ def test_startup_uses_only_own_user_value(tmp_path,monkeypatch):
     monkeypatch.setitem(sys.modules,'winreg',fake)
     assert not general.startup()['enabled']
     assert general.startup(True)['enabled']
-    assert values['WinToolbox']=='"'+str(exe.resolve())+'"'
+    assert values['WinToolbox']=='"'+str(exe.resolve())+'" --silent'
+    assert general.startup()['silent']
+    values['WinToolbox']='"'+str(exe.resolve())+'"'
+    assert general.startup()['enabled'] and not general.startup()['silent']
+    assert general.startup(migrate=True)['silent']
+    assert values['OtherApp']=='keep'
     assert not general.startup(False)['enabled']
     assert values=={'OtherApp':'keep'}
+    general.startup(migrate=True)
+    assert values=={'OtherApp':'keep'}, 'migration must not enable startup'
+    values['WinToolbox']='"C:\\Another\\WinToolbox.exe"'
+    general.startup(migrate=True)
+    assert values['WinToolbox']=='"C:\\Another\\WinToolbox.exe"'
 
 @pytest.mark.parametrize('corrupt',[False,True])
 def test_download_verifies_before_offering_install(tmp_path,monkeypatch,corrupt):

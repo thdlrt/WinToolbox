@@ -19,3 +19,13 @@ export function dataSyncTitle(status?: DataSyncStatus, connected = true, request
   if (!status.configured) return '数据同步：未配置 WebDAV，点击打开设置';
   return status.last_sync ? `最近同步：${syncRelativeTime(status.last_sync, now)}；点击立即同步` : '数据尚未同步；点击立即同步';
 }
+
+// The first observation is historical state. Only a later completed sync can notify.
+export function observeDataSyncCompletion(previous: number | null | undefined, status: DataSyncStatus) {
+  const timestamp = typeof status.last_sync === 'number' && Number.isFinite(status.last_sync) && status.last_sync > 0 ? status.last_sync : null;
+  if (previous === undefined) return { lastSync: timestamp, notify: false };
+  const complete = status.configured && !status.syncing && !dataSyncError(status)
+    && !status.services?.some(service => service.configured && service.syncing);
+  const notify = !!complete && timestamp !== null && timestamp > (previous ?? 0);
+  return { lastSync: notify ? timestamp : previous, notify };
+}

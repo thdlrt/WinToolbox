@@ -20,6 +20,9 @@ using Microsoft.Win32.SafeHandles;
 internal static class MemoryCleaner {
     const string FileName = "WinToolbox.MemoryCleaner.exe";
     const int Protocol = 1;
+    // ShellExecuteEx does not expose the elevated process's stdout. Encode the
+    // failing install step and the low Win32 HRESULT code in its exit status.
+    static int InstallStep;
     static readonly JavaScriptSerializer Json = new JavaScriptSerializer();
     static readonly SecurityIdentifier SystemSid = new SecurityIdentifier("S-1-5-18");
     static readonly SecurityIdentifier AdminSid = new SecurityIdentifier("S-1-5-32-544");
@@ -64,20 +67,27 @@ internal static class MemoryCleaner {
         Directory.SetAccessControl(path, ProtectedDirectoryAcl());
     }
     static void Install(string sid) {
+        InstallStep = 1;
         if (!Administrator()) throw new UnauthorizedAccessException("Administrator approval required");
+        InstallStep = 2;
         ProtectDirectory(Root); ProtectDirectory(DirectoryFor(sid)); RejectReparse(InstalledFile(sid));
+        InstallStep = 3;
         dynamic service = Scheduler(), folder = service.GetFolder(@"\");
         try { folder.GetTask(TaskName(sid)).Stop(0); } catch (COMException) { }
+        InstallStep = 4;
         string target = InstalledFile(sid);
         if (!String.Equals(Self, target, StringComparison.OrdinalIgnoreCase)) {
+            if (!File.Exists(Self)) throw new FileNotFoundException("Bundled memory cleaner is missing", Self);
             // Delete only this known protected file, never recurse or follow links.
             for (int i=0;;i++) { try { if(File.Exists(target)) File.Delete(target); File.Copy(Self,target,false); break; } catch(IOException) { if(i>=30)throw; Thread.Sleep(100); } }
         }
+        InstallStep = 5;
         FileSecurity fileAcl = new FileSecurity(); fileAcl.SetAccessRuleProtection(true,false); fileAcl.SetOwner(AdminSid);
         fileAcl.AddAccessRule(new FileSystemAccessRule(SystemSid,FileSystemRights.FullControl,AccessControlType.Allow));
         fileAcl.AddAccessRule(new FileSystemAccessRule(AdminSid,FileSystemRights.FullControl,AccessControlType.Allow));
         fileAcl.AddAccessRule(new FileSystemAccessRule(new SecurityIdentifier("S-1-5-32-545"),FileSystemRights.ReadAndExecute,AccessControlType.Allow));
         File.SetAccessControl(target,fileAcl);
+        InstallStep = 6;
         dynamic definition = service.NewTask(0);
         definition.RegistrationInfo.Description = "WinToolbox: only fixed memory cleanup operations; on demand, no automatic cleanup.";
         definition.Settings.Enabled = true; definition.Settings.AllowDemandStart = true;
@@ -87,7 +97,9 @@ internal static class MemoryCleaner {
         dynamic action = definition.Actions.Create(0); action.Path = target;
         action.Arguments = "--serve " + sid; action.WorkingDirectory = DirectoryFor(sid);
         // The owning account can read/run but cannot modify the elevated action.
+        InstallStep = 7;
         folder.RegisterTaskDefinition(TaskName(sid),definition,6,"SYSTEM",null,5,"D:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;GRGX;;;"+sid+")");
+        InstallStep = 0;
     }
     static void Uninstall(string sid) {
         if (!Administrator()) throw new UnauthorizedAccessException("Administrator approval required");
@@ -190,6 +202,8 @@ internal static class MemoryCleaner {
                 case "--request":if(args.Length!=3)throw new ArgumentException();Console.WriteLine(Json.Serialize(Request(sid,args[2])));return 0;
                 default:throw new ArgumentException("Unsupported action");
             }
-        }catch(Exception e){Exception actual=e is AggregateException?e.GetBaseException():e;Console.WriteLine(Json.Serialize(new{ok=false,error=actual.Message}));return actual.HResult!=0?actual.HResult:1;}
+        }catch(Exception e){Exception actual=e is AggregateException?e.GetBaseException():e;Console.WriteLine(Json.Serialize(new{ok=false,error=actual.Message}));
+            if(args.Length>0&&args[0]=="--install"&&InstallStep!=0)return unchecked((int)(0x60000000u|((uint)InstallStep<<16)|((uint)actual.HResult&0xFFFFu)));
+            return actual.HResult!=0?actual.HResult:1;}
     }
 }

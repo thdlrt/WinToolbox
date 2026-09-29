@@ -18,10 +18,10 @@ export const orbActions = [
   { id: 'fnconnect', label: '远程访问', description: '打开 FN 远程访问', icon: Radio },
   { id: 'gpu', label: '独显守卫', description: '打开独显省电守卫', icon: Boxes },
   { id: 'codex', label: 'Codex 配置', description: '打开 Codex 配置', icon: Command },
-  { id: 'files', label: '文件整理', description: '打开文件整理', icon: FolderSync },
+  { id: 'scripts', label: '快捷脚本', description: '打开快捷脚本', icon: FolderSync },
   { id: 'plugins', label: '扩展工具', description: '打开扩展工具', icon: Boxes },
   { id: 'settings', label: '工具箱设置', description: '打开设置', icon: Settings2 },
 ] as const;
 export type OrbActionId = typeof orbActions[number]['id'];
-export interface OrbPreferences { actions: OrbActionId[] }
+export interface OrbPreferences { actions: OrbActionId[]; oled_auto_hide: boolean }
 export const defaultOrbActions: OrbActionId[] = ['clean', 'relay', 'subtitle-toggle', 'home'];

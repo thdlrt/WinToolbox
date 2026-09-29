@@ -41,6 +41,7 @@ fn placement(cx:i32,cy:i32,scale:f64,left:i32,top:i32,right:i32,bottom:i32)->((i
 }
 
 pub fn open(app:&AppHandle,page:&str)->Result<(),String>{
+    if let Some(w)=app.get_webview_window("main"){super::webview_memory::set_background(&w,false);}
     if let Some(w)=app.get_webview_window("main"){w.show().map_err(|e|e.to_string())?;let _=w.unminimize();let _=w.set_focus();w.emit("tool-open",json!({"page":page})).map_err(|e|e.to_string())?;}
     if let Some(w)=app.get_webview_window("orb"){let _=w.emit("orb-reset",());}
     Ok(())
@@ -107,7 +108,7 @@ pub fn orb_save_position(app:AppHandle)->Result<OrbLayout,String>{
 #[tauri::command]
 pub async fn orb_action(app:AppHandle,action:String)->Result<(),String>{
     match action.as_str(){
-        "home"|"relay"|"captions"|"settings"|"ram"|"orb-settings"|"filesync"|"memory"|"media"|"live"|"practice"|"phonetics"|"expenses"|"shizuku"|"fnconnect"|"gpu"|"codex"|"files"|"plugins"=>open(&app,&action),
+        "home"|"relay"|"captions"|"settings"|"ram"|"orb-settings"|"filesync"|"memory"|"media"|"live"|"practice"|"phonetics"|"expenses"|"network"|"shizuku"|"fnconnect"|"gpu"|"codex"|"files"|"scripts"|"quick-settings"|"plugins"=>open(&app,&action),
         "caption-window"=>super::set_captions_window(app,true).await,
         "hide"=>set_orb(app,false).await,
         "quit"=>{app.exit(0);Ok(())},

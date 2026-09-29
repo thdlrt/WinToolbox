@@ -1,55 +1,59 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AudioLines, Boxes, Captions, CheckCircle2, Command, FileStack, FolderSync, House, Moon, PanelLeftClose, PanelLeftOpen, Radio, ReceiptText, Settings2, Smartphone, Speech, Sun, X, AlertCircle } from 'lucide-react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Boxes, CheckCircle2, FileStack, House, Moon, PanelLeftClose, PanelLeftOpen, Settings2, Sun, X, AlertCircle } from 'lucide-react';
 import { errorText, isDesktop, rpc, subscribe, type Job, type Settings } from './api';
 import { AppContext, type AppInfo, type Page } from './context';
 import { cx, IconButton } from './ui';
 import { migratedUiPreferences, validFavorites, validTheme } from './uiPreferences';
+import { moveSidebarItem } from './sidebarOrder';
 import DataSyncIndicator from './DataSyncIndicator';
-import HomePage from './pages/Home';
-import OrbSettingsPage from './pages/OrbSettings';
-import SystemMemoryPage from './pages/SystemMemory';
+import { visiblePolling } from './visiblePolling';
+const HomePage = lazy(() => import('./pages/Home'));
+const OrbSettingsPage = lazy(() => import('./pages/OrbSettings'));
+const SystemMemoryPage = lazy(() => import('./pages/SystemMemory'));
 import { listen } from '@tauri-apps/api/event';
-import MediaPage from './pages/Media';
-import LivePage from './pages/Live';
-import CodexPage from './pages/Codex';
-import FilesPage from './pages/Files';
-import FileSyncPage from './pages/FileSync';
-import RelayPage from './pages/Relay';
+const MediaPage = lazy(() => import('./pages/Media'));
+const LivePage = lazy(() => import('./pages/Live'));
+const CodexPage = lazy(() => import('./pages/Codex'));
+const QuickScriptsPage = lazy(() => import('./pages/QuickScripts'));
+const FileSyncPage = lazy(() => import('./pages/FileSync'));
+const RelayPage = lazy(() => import('./pages/Relay'));
 import './filesync.css';
-import PluginsPage from './pages/Plugins';
-import SettingsPage from './pages/Settings';
-import CaptionsPage, { CaptionOverlay } from './pages/Captions';
-import PracticePage from './pages/Practice';
-import PhoneticsPage from './pages/Phonetics';
-import ExpensesPage from './pages/Expenses';
-import NetworkPage from './pages/Network';
-import ShizukuPage from './pages/Shizuku';
-import FnConnectPage from './pages/FnConnect';
-import GpuGuardPage from './pages/GpuGuard';
-import ProjectMemoryPage from './pages/ProjectMemory';
+const PluginsPage = lazy(() => import('./pages/Plugins'));
+const SettingsPage = lazy(() => import('./pages/Settings'));
+import { toolIcons } from './toolIcons';
+const CaptionsPage = lazy(() => import('./pages/Captions'));
+const CaptionOverlay = lazy(() => import('./pages/Captions').then(module => ({ default: module.CaptionOverlay })));
+const PracticePage = lazy(() => import('./pages/Practice'));
+const PhoneticsPage = lazy(() => import('./pages/Phonetics'));
+const ExpensesPage = lazy(() => import('./pages/Expenses'));
+const NetworkPage = lazy(() => import('./pages/Network'));
+const ShizukuPage = lazy(() => import('./pages/Shizuku'));
+const FnConnectPage = lazy(() => import('./pages/FnConnect'));
+const GpuGuardPage = lazy(() => import('./pages/GpuGuard'));
+const ProjectMemoryPage = lazy(() => import('./pages/ProjectMemory'));
 
 const nav: { id: Page; name: string; icon: typeof House }[] = [
-  { id: 'orb-settings', name: '悬浮球设置', icon: Settings2 },
-  { id: 'ram', name: '内存清理', icon: Boxes },
-  { id: 'relay', name: '文件中转站', icon: FolderSync },
-  { id: 'filesync', name: '文件同步', icon: FolderSync },
-  { id: 'home', name: '工具首页', icon: House },
-  { id: 'memory', name: '项目记忆', icon: FileStack },
-  { id: 'media', name: '音视频工作台', icon: AudioLines }, { id: 'live', name: '实时助手', icon: Radio },
-  { id: 'captions', name: '实时字幕', icon: Captions },
-  { id: 'practice', name: '口语练习', icon: Speech },
-  { id: 'expenses', name: '记账', icon: ReceiptText },
-  { id: 'network', name: '网络诊断', icon: Radio },
-  { id: 'shizuku', name: 'Shizuku', icon: Smartphone },
-  { id: 'fnconnect', name: 'FN 远程访问', icon: Radio },
-  { id: 'gpu', name: '独显省电守卫', icon: Settings2 },
-  { id: 'codex', name: 'Codex 配置', icon: Command },
-  { id: 'files', name: '文件整理', icon: FolderSync }, { id: 'plugins', name: '扩展工具', icon: Boxes },
-  { id: 'settings', name: '设置', icon: Settings2 },
+  { id: 'orb-settings', name: '悬浮球设置', icon: toolIcons['orb-settings'] },
+  { id: 'ram', name: '内存清理', icon: toolIcons['ram'] },
+  { id: 'relay', name: '文件中转站', icon: toolIcons['relay'] },
+  { id: 'filesync', name: '文件同步', icon: toolIcons['filesync'] },
+  { id: 'home', name: '工具首页', icon: toolIcons['home'] },
+  { id: 'memory', name: '项目记忆', icon: toolIcons['memory'] },
+  { id: 'media', name: '音视频工作台', icon: toolIcons['media'] }, { id: 'live', name: '实时助手', icon: toolIcons['live'] },
+  { id: 'captions', name: '实时字幕', icon: toolIcons['captions'] },
+  { id: 'practice', name: '口语练习', icon: toolIcons['practice'] },
+  { id: 'expenses', name: '记账', icon: toolIcons['expenses'] },
+  { id: 'network', name: '网络诊断', icon: toolIcons['network'] },
+  { id: 'shizuku', name: 'Shizuku', icon: toolIcons['shizuku'] },
+  { id: 'fnconnect', name: 'FN 远程访问', icon: toolIcons['fnconnect'] },
+  { id: 'gpu', name: '独显省电守卫', icon: toolIcons['gpu'] },
+  { id: 'codex', name: 'Codex 配置', icon: toolIcons['codex'] },
+  { id: 'scripts', name: '快捷脚本', icon: toolIcons['scripts'] }, { id: 'plugins', name: '扩展工具', icon: toolIcons['plugins'] },
+  { id: 'settings', name: '设置', icon: toolIcons['settings'] },
 ];
 
 function localPinnedTools(): string[] {
-  try { const value = JSON.parse(localStorage.getItem('wintoolbox-favorites') || '["media","live"]'); return validFavorites(value) ? value : ['media', 'live']; }
+  try { const value = JSON.parse(localStorage.getItem('wintoolbox-favorites') || '["media","live"]'); return validFavorites(value) ? value.map(id => id === 'files' ? 'scripts' : id) : ['media', 'live']; }
   catch { return ['media', 'live']; }
 }
 
@@ -94,10 +98,7 @@ export default function App() {
     })();
   }, []);
   const refreshSettings = useCallback(async () => { setSettings(await rpc<Settings>('settings.get')); }, []);
-  const togglePinnedTool = useCallback((id: string) => {
-    if (!nav.some(item => item.id === id && item.id !== 'home' && item.id !== 'settings')) return;
-    const previous = pinnedToolsRef.current;
-    const next = previous.includes(id) ? previous.filter(value => value !== id) : [...previous, id];
+  const savePinnedTools = useCallback((next: string[]) => {
     pinnedToolsRef.current = next;
     setPinnedTools(next);
     localStorage.setItem('wintoolbox-favorites', JSON.stringify(next));
@@ -110,6 +111,22 @@ export default function App() {
       if (revision === pinnedWrite.current) { pinnedSaving.current = false; error(reason); void refreshSettings().catch(error); }
     });
   }, [error, refreshSettings]);
+  const togglePinnedTool = useCallback((id: string) => {
+    if (!nav.some(item => item.id === id && item.id !== 'home' && item.id !== 'settings')) return;
+    const previous = pinnedToolsRef.current;
+    savePinnedTools(previous.includes(id) ? previous.filter(value => value !== id) : [...previous, id]);
+  }, [savePinnedTools]);
+  const drag = useRef<{ id: string; x: number; y: number; active: boolean; target?: string; after?: boolean } | undefined>(undefined);
+  const suppressNavClick = useRef(false);
+  const [dragMark, setDragMark] = useState<{ source: string; target?: string; after?: boolean }>();
+  const finishDrag = (cancel = false) => {
+    const state = drag.current;
+    if (state?.active) {
+      suppressNavClick.current = true;
+      if (!cancel && state.target) savePinnedTools(moveSidebarItem(pinnedToolsRef.current, state.id, state.target, state.after));
+    }
+    drag.current = undefined; setDragMark(undefined);
+  };
   const refreshJobs = useCallback(async () => { const result = await rpc<{ jobs: Job[] }>('jobs.list'); setJobs(result.jobs || []); }, []);
   const refresh = useCallback(async () => {
     if (!isDesktop()) return;
@@ -136,7 +153,7 @@ export default function App() {
     const selectedTheme = settings.preferences.theme;
     if (validTheme(selectedTheme)) { updateTheme(selectedTheme); localStorage.setItem('wintoolbox-theme', selectedTheme); }
     const favorites = settings.preferences.favorites;
-    if (!pinnedSaving.current && validFavorites(favorites)) { setPinnedTools(favorites); localStorage.setItem('wintoolbox-favorites', JSON.stringify(favorites)); }
+    if (!pinnedSaving.current && validFavorites(favorites)) { setPinnedTools(favorites.map(id => id === 'files' ? 'scripts' : id)); localStorage.setItem('wintoolbox-favorites', JSON.stringify(favorites)); }
   }, [settings, error]);
   useEffect(() => {
     const media = window.matchMedia('(prefers-color-scheme: dark)');
@@ -148,38 +165,45 @@ export default function App() {
     if (!isDesktop()) return;
     let disposed = false; let off: (() => void) | undefined; let timer: ReturnType<typeof setTimeout> | undefined;
     void subscribe(event => {
-      if (event.type.startsWith('job') || event.type === 'jobs.changed') { clearTimeout(timer); timer = setTimeout(() => { void refreshJobs().catch(error); }, 180); }
+      if (!document.hidden && (event.type.startsWith('job') || event.type === 'jobs.changed')) { clearTimeout(timer); timer = setTimeout(() => { void refreshJobs().catch(error); }, 180); }
       if (event.type === 'app.restored') { void refreshSettings().catch(error); success('已恢复备份，请重启工具箱以加载全部数据。'); }
+      if (event.type === 'quick.error') error(String(event.message || '快捷菜单未能打开'));
       if (event.type === 'gpu_guard.activity') success(String(event.message || '检测到独显活动'));
       if (event.type === 'relay.open') { navigate('relay'); if (event.error) error(event.error); }
     }).then(unlisten => { if (disposed) unlisten(); else off = unlisten; }).catch(error);
-    const checkRelay = () => { if (!overlay && !captions) void rpc<{ job_id?: string } | null>('relay.pending').then(value => { if (value?.job_id) navigate('relay'); }).catch(() => {}); };
-    checkRelay();
-    const interval = setInterval(() => { void refreshJobs().catch(() => {}); checkRelay(); }, 4000);
-    return () => { disposed = true; off?.(); clearTimeout(timer); clearInterval(interval); };
+    const checkRelay = () => { if (!overlay && !captions) return rpc<{ job_id?: string } | null>('relay.pending').then(value => { if (value?.job_id) navigate('relay'); }).catch(() => {}); };
+    const stopPolling = visiblePolling(() => Promise.allSettled([refreshJobs(), checkRelay()]), 15000);
+    return () => { disposed = true; off?.(); clearTimeout(timer); stopPolling(); };
   }, [refreshJobs, refreshSettings, error, success]);
 
   useEffect(() => {
     if (!isDesktop()) return;
     let disposed = false; let off: (() => void) | undefined;
-    void listen<{ page: Page }>('tool-open', e => { if (['home', 'relay', 'captions', 'settings', 'ram', 'orb-settings', 'filesync', 'memory', 'media', 'live', 'practice', 'phonetics', 'expenses', 'shizuku', 'fnconnect', 'gpu', 'codex', 'files', 'plugins'].includes(e.payload.page)) navigate(e.payload.page); }).then(fn => { if (disposed) fn(); else off = fn; }).catch(error);
+    void listen<{ page: string }>('tool-open', e => { if (e.payload.page === 'quick-settings') { sessionStorage.setItem('wintoolbox-settings-tab', 'quick'); navigate('settings'); window.dispatchEvent(new Event('quick-settings-open')); return; } if (e.payload.page === 'files') { navigate('scripts'); return; } if (['home', 'relay', 'captions', 'settings', 'ram', 'orb-settings', 'filesync', 'memory', 'media', 'live', 'practice', 'phonetics', 'expenses', 'network', 'shizuku', 'fnconnect', 'gpu', 'codex', 'scripts', 'plugins'].includes(e.payload.page)) navigate(e.payload.page as Page); }).then(fn => { if (disposed) fn(); else off = fn; }).catch(error);
     return () => { disposed = true; off?.(); };
   }, [navigate]);
 
   const value = useMemo(() => ({ page, navigate, setBeforeNavigate, connected, info, settings, jobs, theme, setTheme, pinnedTools, togglePinnedTool, refresh, refreshJobs, refreshSettings, error, success, run, track }), [page, navigate, setBeforeNavigate, connected, info, settings, jobs, theme, setTheme, pinnedTools, togglePinnedTool, refresh, refreshJobs, refreshSettings, error, success, run, track]);
-  const sidebarNav = nav.filter(item => item.id === 'home' || item.id === 'settings' || pinnedTools.includes(item.id));
+  const sidebarNav = [...new Set(pinnedTools)].flatMap(id => { const item = nav.find(item => item.id === id && id !== 'home' && id !== 'settings'); return item ? [item] : []; });
   const activeNav = page === 'phonetics' ? { name: '音标教学' } : nav.find(item => item.id === page)!;
-  const pages = { 'orb-settings': <OrbSettingsPage />, ram: <SystemMemoryPage />, relay: <RelayPage />, filesync: <FileSyncPage />, home: <HomePage />, memory: <ProjectMemoryPage />, media: <MediaPage />, live: <LivePage />, captions: <CaptionsPage />, practice: <PracticePage />, phonetics: <PhoneticsPage />, expenses: <ExpensesPage />, network: <NetworkPage />, shizuku: <ShizukuPage />, fnconnect: <FnConnectPage />, gpu: <GpuGuardPage />, codex: <CodexPage />, files: <FilesPage />, plugins: <PluginsPage />, settings: <SettingsPage /> };
+  const pages = { 'orb-settings': <OrbSettingsPage />, ram: <SystemMemoryPage />, relay: <RelayPage />, filesync: <FileSyncPage />, home: <HomePage />, memory: <ProjectMemoryPage />, media: <MediaPage />, live: <LivePage />, captions: <CaptionsPage />, practice: <PracticePage />, phonetics: <PhoneticsPage />, expenses: <ExpensesPage />, network: <NetworkPage />, shizuku: <ShizukuPage />, fnconnect: <FnConnectPage />, gpu: <GpuGuardPage />, codex: <CodexPage />, scripts: <QuickScriptsPage />, plugins: <PluginsPage />, settings: <SettingsPage /> };
 
   return <AppContext.Provider value={value}>
-    {captions ? <CaptionOverlay /> : overlay ? <div className="overlay-shell"><LivePage overlay /></div> : <div className={cx('app-shell', collapsed && 'nav-collapsed')}>
+    {captions ? <Suspense fallback={null}><CaptionOverlay /></Suspense> : overlay ? <div className="overlay-shell"><Suspense fallback={<div role="status">加载中…</div>}><LivePage overlay /></Suspense></div> : <div className={cx('app-shell', collapsed && 'nav-collapsed')}>
       <aside className="sidebar"><button className="brand" onClick={() => navigate('home')} aria-label="WinToolbox 首页"><span className="brand-logo"><Boxes size={22} strokeWidth={1.8} /></span><span className="brand-text">WinToolbox</span></button>
-        <nav aria-label="主导航">{sidebarNav.map(item => <div key={item.id}><button title={item.name} className={cx('nav-item', (page === item.id || page === 'phonetics' && item.id === 'practice') && 'active')} onClick={() => navigate(item.id)}><item.icon size={19} strokeWidth={1.8} /><span>{item.name}</span></button></div>)}</nav>
-        <div className="sidebar-bottom"><div className="local-status"><span className={cx('connection-dot', connected && 'online')} /><span>{connected ? '服务已连接' : isDesktop() ? '服务未连接' : '浏览器预览'}</span><DataSyncIndicator /></div><button className="collapse-button" aria-label={collapsed ? '展开侧栏' : '收起侧栏'} title={collapsed ? '展开侧栏' : '收起侧栏'} onClick={() => setCollapsed(!collapsed)}>{collapsed ? <PanelLeftOpen size={17} /> : <PanelLeftClose size={17} />}<span>收起侧栏</span></button></div>
+        <nav aria-label="主导航">{sidebarNav.map(item => <div key={item.id} data-sidebar-id={item.id} className={cx('sidebar-tool', dragMark?.source === item.id && 'dragging', dragMark?.target === item.id && (dragMark.after ? 'drop-after' : 'drop-before'))}>
+          <button title={`${item.name} · 拖动排序`} aria-label={item.name} aria-current={page === item.id ? 'page' : undefined} className={cx('nav-item', (page === item.id || page === 'phonetics' && item.id === 'practice') && 'active')}
+            onPointerDown={event => { if (event.button !== 0) return; suppressNavClick.current = false; drag.current = { id: item.id, x: event.clientX, y: event.clientY, active: false }; event.currentTarget.setPointerCapture(event.pointerId); }}
+            onPointerMove={event => { const state = drag.current; if (!state || state.id !== item.id) return; if (!state.active && Math.hypot(event.clientX - state.x, event.clientY - state.y) < 6) return; state.active = true; const row = document.elementFromPoint(event.clientX, event.clientY)?.closest<HTMLElement>('[data-sidebar-id]'); state.target = row?.dataset.sidebarId; state.after = row ? event.clientY > row.getBoundingClientRect().top + row.getBoundingClientRect().height / 2 : false; setDragMark({ source: state.id, target: state.target, after: state.after }); }}
+            onPointerUp={() => finishDrag()} onPointerCancel={() => finishDrag(true)} onLostPointerCapture={() => { if (drag.current) finishDrag(true); }}
+            onKeyDown={event => { if (event.key === 'Escape') finishDrag(true); if (event.altKey && ['ArrowUp', 'ArrowDown'].includes(event.key)) { event.preventDefault(); const index = sidebarNav.findIndex(value => value.id === item.id); const down = event.key === 'ArrowDown'; const target = sidebarNav[index + (down ? 1 : -1)]; if (target) savePinnedTools(moveSidebarItem(pinnedToolsRef.current, item.id, target.id, down)); } }}
+            onClick={() => { if (suppressNavClick.current) { suppressNavClick.current = false; return; } navigate(item.id); }}><item.icon size={19} strokeWidth={1.8} /><span>{item.name}</span></button>
+        </div>)}</nav>
+        <div className="sidebar-bottom"><button title="设置" aria-label="设置" aria-current={page === 'settings' ? 'page' : undefined} className={cx('nav-item', page === 'settings' && 'active')} onClick={() => navigate('settings')}><Settings2 size={19} strokeWidth={1.8} /><span>设置</span></button><div className="local-status"><span className={cx('connection-dot', connected && 'online')} /><span>{connected ? '服务已连接' : isDesktop() ? '服务未连接' : '浏览器预览'}</span><DataSyncIndicator /></div><button className="collapse-button" aria-label={collapsed ? '展开侧栏' : '收起侧栏'} title={collapsed ? '展开侧栏' : '收起侧栏'} onClick={() => setCollapsed(!collapsed)}>{collapsed ? <PanelLeftOpen size={17} /> : <PanelLeftClose size={17} />}<span>收起侧栏</span></button></div>
       </aside>
       <main className="main-panel"><header className="topbar"><h1 className="page-title">{activeNav.name}</h1><div className="topbar-actions"><IconButton label={theme === 'dark' ? '切换浅色模式' : '切换深色模式'} onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}>{theme === 'dark' ? <Sun size={18} /> : <Moon size={18} />}</IconButton></div></header>
         {!connected && <div className="connection-banner"><FileStack size={15} /><span>{isDesktop() ? '本地服务尚未连接。配置与任务将在连接恢复后可用。' : '浏览器预览模式 · 打开桌面程序后即可连接本地文件和处理引擎。'}</span>{isDesktop() && <button onClick={() => void refresh()}>重新连接</button>}</div>}
-        <div className="content-scroll"><div className="page-content" key={page}>{pages[page]}</div></div>
+        <div className="content-scroll"><div className="page-content" key={page}><Suspense fallback={<div role="status">加载中…</div>}>{pages[page]}</Suspense></div></div>
       </main>
     </div>}
     {toast && <div className={cx('toast', toast.kind)} role={toast.kind === 'error' ? 'alert' : 'status'}>{toast.kind === 'error' ? <AlertCircle size={19} /> : <CheckCircle2 size={19} />}<span>{toast.message}</span><IconButton label="关闭提示" onClick={() => setToast(undefined)}><X size={17} /></IconButton></div>}

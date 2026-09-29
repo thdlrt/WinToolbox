@@ -1,3 +1,4 @@
+import { visiblePolling } from './visiblePolling';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { errorText, native, rpc, subscribe, type BackendEvent } from './api';
 
@@ -86,11 +87,11 @@ export function useCaptions(connected: boolean) {
       } else if (event.type.startsWith('captions.')) setState(old => captionReducer(old, event));
     }).then(unlisten => {
       if (disposed) unlisten();
-      else { off = unlisten; void refresh(); }
+      else { off = unlisten; if (!document.hidden) void refresh(); }
     }).catch(reason => { if (!disposed) setFailure(errorText(reason)); });
     void native.captionState().then(value => { if (!disposed) setWindowState(value); }).catch(reason => { if (!disposed) setFailure(errorText(reason)); });
-    const timer = setInterval(() => { void refresh(); }, 3500);
-    return () => { disposed = true; off?.(); clearInterval(timer); };
+    const stopPolling = visiblePolling(refresh, 3500);
+    return () => { disposed = true; off?.(); stopPolling(); };
   }, [connected, receive]);
   const perform = useCallback(async (action: () => Promise<void>) => {
     setFailure(''); setBusy(true);

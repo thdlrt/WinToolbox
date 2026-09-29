@@ -8,7 +8,7 @@ from pathlib import Path
 
 BAILIAN_MODELS = {
     "transcribe": "qwen-audio-3.0-asr-flash", "live_asr": "qwen-audio-3.0-asr-flash-streaming",
-    "translate": "qwen3.8-flash", "chat": "qwen3.8-flash", "vision": "qwen3.8-flash",
+    "translate": "qwen3.8-flash", "quick_translate": "qwen3.8-flash", "chat": "qwen3.8-flash", "vision": "qwen3.8-flash",
     "embedding": "text-embedding-v4", "tts": "qwen3-tts-flash",
 }
 

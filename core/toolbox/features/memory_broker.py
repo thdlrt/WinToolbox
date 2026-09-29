@@ -15,6 +15,29 @@ from .memory_worker import commands
 
 log = logging.getLogger(__name__)
 
+INSTALL_STEPS = {
+    1: '检查管理员权限',
+    2: '准备受保护的组件目录',
+    3: '连接 Windows 计划任务服务',
+    4: '复制清理组件',
+    5: '设置组件文件权限',
+    6: '创建计划任务配置',
+    7: '注册 Windows 计划任务',
+}
+
+
+def install_failure(code):
+    if code & 0xff000000 == 0x60000000:
+        step = INSTALL_STEPS.get((code >> 16) & 0xff)
+        if step:
+            detail = f'{step}失败（Windows 错误 0x{code & 0xffff:04X}）'
+            if (code & 0xffff) == 2:
+                detail += '：找不到所需文件或计划任务；请检查组件文件和 Windows 计划任务服务'
+            return detail
+    if code == 0x80070002:
+        return '清理组件安装失败（0x80070002：找不到文件或计划任务）；请更新完整便携版后重试'
+    return f'清理组件安装或移除失败（0x{code:08X}）'
+
 
 def launch_path(path):
     """.NET Framework cannot initialize from a Win32 extended-length path."""
@@ -91,7 +114,7 @@ def elevate(path, action, sid):
             raise ValueError('组件安装尚未确认完成，请稍后重新操作')
         code = w.DWORD()
         if not kernel.GetExitCodeProcess(info.process, ctypes.byref(code)): raise ctypes.WinError(ctypes.get_last_error())
-        if code.value: raise ValueError(f'清理组件安装或移除失败（0x{code.value:08X}）')
+        if code.value: raise ValueError(install_failure(code.value))
     finally: kernel.CloseHandle(info.process)
 
 

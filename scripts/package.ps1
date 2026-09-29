@@ -65,6 +65,7 @@ if ($LASTEXITCODE -ne 0) { throw "准备 FN Connect 核心失败" }
 if ($LASTEXITCODE -ne 0) { throw '准备 ADB 运行环境失败' }
 Move-RetiredMemoryTool "$taskStage/tools"
 & "$PSScriptRoot/prepare_memory_cleaner.ps1"
+& "$PSScriptRoot/prepare_quick_context.ps1"
 Copy-Item -LiteralPath "$taskRoot/docs/THIRD_PARTY.md" -Destination "$taskStage/tools/THIRD_PARTY.md" -Force
 & $taskPython -c 'import pathlib,subprocess,sys; r=subprocess.run([sys.argv[1],sys.argv[2]],stdout=subprocess.PIPE,stderr=subprocess.STDOUT,check=True); pathlib.Path(sys.argv[3]).write_bytes(r.stdout)' $taskFFmpeg '-L' "$taskStage/tools/ffmpeg-license.txt"
 if ($LASTEXITCODE -ne 0) { throw '保存 FFmpeg 许可信息失败' }
@@ -96,6 +97,8 @@ Copy-Item -LiteralPath "$taskRoot/docs/FILE-RELAY.md" -Destination "$taskPortabl
 Copy-Item -LiteralPath "$taskRoot/docs/FLOATING-ORB.md" -Destination "$taskPortable/docs/FLOATING-ORB.md" -Force
 Copy-Item -LiteralPath "$taskRoot/docs/LEDGER.md" -Destination "$taskPortable/docs/LEDGER.md" -Force
 Copy-Item -LiteralPath "$taskRoot/docs/WEBDAV.md" -Destination "$taskPortable/docs/WEBDAV.md" -Force
+Copy-Item -LiteralPath "$taskRoot/docs/FEISHU-BRIDGE.md" -Destination "$taskPortable/docs/FEISHU-BRIDGE.md" -Force
+Copy-Item -LiteralPath "$taskRoot/docs/QUICK-MENU.md" -Destination "$taskPortable/docs/QUICK-MENU.md" -Force
 foreach ($taskDoc in @('DATA-SYNC.md','CONFIG-BACKUP.md')) { Copy-Item -LiteralPath "$taskRoot/docs/$taskDoc" -Destination "$taskPortable/docs/$taskDoc" -Force }
 if ($PortableOnly) {
     Write-Output "免安装版已更新：$taskPortable/WinToolbox.exe"
@@ -119,7 +122,7 @@ foreach ($taskPart in @('python','core','tools')) { robocopy "$taskStage/$taskPa
 Set-Content -LiteralPath "$taskReleasePortable/portable.flag" -Value 'WinToolbox portable data mode' -Encoding utf8
 Copy-Item -LiteralPath "$taskRoot/README.md" -Destination "$taskReleasePortable/使用说明.md" -Force
 New-Item -ItemType Directory -Path "$taskReleasePortable/docs" -Force | Out-Null
-foreach ($taskDoc in @('PROJECT-MEMORY.md','FILESYNC.md','FILE-RELAY.md','FLOATING-ORB.md','LEDGER.md','WEBDAV.md','DATA-SYNC.md','CONFIG-BACKUP.md',"RELEASE-$taskVersion.md")) {
+foreach ($taskDoc in @('PROJECT-MEMORY.md','FILESYNC.md','FILE-RELAY.md','FLOATING-ORB.md','LEDGER.md','WEBDAV.md','DATA-SYNC.md','CONFIG-BACKUP.md','QUICK-MENU.md','PERFORMANCE.md','FEISHU-BRIDGE.md',"RELEASE-$taskVersion.md")) {
     Copy-Item -LiteralPath "$taskRoot/docs/$taskDoc" -Destination "$taskReleasePortable/docs/$taskDoc" -Force
 }
 $taskPortableZip = Join-Path $taskDist "WinToolbox-$taskVersion-portable.zip"

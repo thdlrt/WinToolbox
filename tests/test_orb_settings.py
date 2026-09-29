@@ -13,7 +13,7 @@ def test_shortcuts_persist_order_and_notify_all_windows(tmp_path):
     service, events = make_service(tmp_path)
     assert service.get()['actions'] == DEFAULT_ACTIONS
     chosen = ['filesync', 'clean', 'ram', 'subtitle-toggle', 'media', 'home']
-    assert service.save({'actions': chosen}) == {'actions': chosen}
+    assert service.save({'actions': chosen}) == {'actions': chosen, 'oled_auto_hide': True}
     chosen.reverse()  # The caller cannot mutate the stored value or event.
     assert make_service(tmp_path)[0].get()['actions'][0] == 'filesync'
     assert events == [('orb.settings.changed', service.get())]
@@ -33,10 +33,20 @@ def test_bad_shortcuts_do_not_overwrite_saved_settings(tmp_path, actions):
 def test_damaged_or_unsupported_configuration_keeps_orb_usable(tmp_path, content):
     service, _ = make_service(tmp_path)
     service.path.write_text(content, encoding='utf-8')
-    assert service.get() == {'actions': DEFAULT_ACTIONS}
+    assert service.get() == {'actions': DEFAULT_ACTIONS, 'oled_auto_hide': True}
 
 
 def test_default_result_does_not_mutate_defaults(tmp_path):
     service, _ = make_service(tmp_path)
     service.get()['actions'].clear()
     assert service.get()['actions'] == ['clean', 'relay', 'subtitle-toggle', 'home']
+
+
+def test_oled_preference_preserves_existing_shortcut_clients(tmp_path):
+    service, _ = make_service(tmp_path)
+    service.save({'actions':['home'],'oled_auto_hide':False})
+    assert not make_service(tmp_path)[0].get()['oled_auto_hide']
+    assert not service.save({'actions':['home','clean']})['oled_auto_hide']
+    before=service.path.read_bytes()
+    with pytest.raises(ValueError): service.save({'actions':['home'],'oled_auto_hide':'false'})
+    assert service.path.read_bytes()==before

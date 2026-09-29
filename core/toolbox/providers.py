@@ -50,7 +50,7 @@ class Providers:
         selected = values["roles"].get(role, {})
         provider_id = provider_id or selected.get("provider_id")
         if provider_id == "local":
-            if role not in ("chat", "translate", "vision", "embedding"):
+            if role not in ("chat", "translate", "quick_translate", "vision", "embedding"):
                 raise ProviderError("该功能不能通过此接口执行本地模型；本地转写和 CosyVoice 配音请使用对应功能，不会回退云端")
             if not (model or selected.get("model")):
                 raise ProviderError("请在功能模型设置中选择本地模型")

@@ -97,7 +97,7 @@ class Job:
         self.manager.storage.put("checkpoints", key, {"result": result, "files": files})
         return result
 
-    def run_process(self, args, *, cwd=None, env=None, timeout=None):
+    def run_process(self, args, *, cwd=None, env=None, timeout=None, max_output_bytes=None):
         """Hide Windows child consoles, retain diagnostics, cancel entire process tree."""
         flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
         log_path = self.work_dir / ("process-" + uuid.uuid4().hex[:8] + ".log")
@@ -118,7 +118,12 @@ class Job:
                     process.kill()
                 process.wait(timeout=10)
                 raise
-        output = log_path.read_text("utf-8", errors="replace")
+        if max_output_bytes is None:
+            output = log_path.read_text("utf-8", errors="replace")
+        else:
+            with log_path.open('rb') as log:
+                log.seek(max(0, log_path.stat().st_size - max_output_bytes))
+                output = log.read(max_output_bytes).decode('utf-8', errors='replace')
         if process.returncode:
             raise RuntimeError(f"{Path(str(args[0])).name} 执行失败（{process.returncode}）：{output[-5000:]}")
         return output

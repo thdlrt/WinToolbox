@@ -153,6 +153,8 @@ class App:
             self.gpu_guard_close()
         if hasattr(self, "fnconnect_close"):
             self.fnconnect_close()
+        if hasattr(self, "feishu_bridge"):
+            self.feishu_bridge.close()
         holder = getattr(self, "live_holder", None)
         if holder and holder.get("session") and not holder["session"].stop_event.is_set():
             holder["session"].stop()
@@ -179,6 +181,8 @@ class App:
             self.gpu_guard_close()
         if hasattr(self, "fnconnect_close"):
             self.fnconnect_close()
+        if hasattr(self, "feishu_bridge"):
+            self.feishu_bridge.close()
         holder = getattr(self, "live_holder", None)
         if holder and holder.get("session") and not holder["session"].stop_event.is_set():
             holder["session"].stop()

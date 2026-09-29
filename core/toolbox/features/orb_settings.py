@@ -4,7 +4,7 @@ import threading
 from ..settings import atomic_json
 
 DEFAULT_ACTIONS = ['clean', 'relay', 'subtitle-toggle', 'home']
-ALLOWED_ACTIONS = frozenset(DEFAULT_ACTIONS + ['ram', 'captions', 'filesync', 'memory', 'media', 'live', 'practice', 'phonetics', 'expenses', 'shizuku', 'fnconnect', 'gpu', 'codex', 'files', 'plugins', 'settings'])
+ALLOWED_ACTIONS = frozenset(DEFAULT_ACTIONS + ['ram', 'captions', 'filesync', 'memory', 'media', 'live', 'practice', 'phonetics', 'expenses', 'shizuku', 'fnconnect', 'gpu', 'codex', 'files', 'scripts', 'plugins', 'settings'])
 
 
 class OrbSettings:
@@ -15,12 +15,15 @@ class OrbSettings:
 
     def get(self, _=None):
         with self.lock:
+            auto_hide = True
             try:
                 value = json.loads(self.path.read_text('utf-8'))
+                auto_hide = value.get('oled_auto_hide', True) is not False
                 actions = value.get('actions')
+                if isinstance(actions, list): actions = list(dict.fromkeys('scripts' if a == 'files' else a for a in actions))
                 self.validate(actions)
             except (OSError, ValueError, TypeError, AttributeError): actions = DEFAULT_ACTIONS.copy()
-            return {'actions': actions}
+            return {'actions': actions, 'oled_auto_hide': auto_hide}
 
     @staticmethod
     def validate(actions):
@@ -33,7 +36,9 @@ class OrbSettings:
     def save(self, params):
         actions = params.get('actions')
         self.validate(actions)
-        value = {'actions': actions.copy()}
+        auto_hide = params.get('oled_auto_hide', self.get()['oled_auto_hide'])
+        if not isinstance(auto_hide, bool): raise ValueError('OLED 自动隐去开关无效')
+        value = {'actions': actions.copy(), 'oled_auto_hide': auto_hide}
         with self.lock: atomic_json(self.path, value)
         self.app.emit('orb.settings.changed', **value)
         return value

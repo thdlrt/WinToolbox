@@ -5199,7 +5199,7 @@ dependencies = [
 
 [[package]]
 name = "wintoolbox"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "drag",
  "rfd",
@@ -5209,6 +5209,8 @@ dependencies = [
  "tauri-build",
  "tauri-plugin-global-shortcut",
  "tauri-plugin-single-instance",
+ "webview2-com",
+ "windows-core 0.61.2",
 ]
 
 [[package]]
