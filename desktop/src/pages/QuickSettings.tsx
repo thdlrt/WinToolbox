@@ -3,10 +3,12 @@ import { Save } from 'lucide-react';
 import { getQuickSettings,saveQuickSettings,quickTools,type QuickSettingsValue } from '../quickMenuApi';
 import { useApp } from '../context';
 import { Button,CheckField,Field,Notice,Section } from '../ui';
-import { errorText,subscribe } from '../api';
+import { errorText,subscribe,rpc } from '../api';
 
 export default function QuickSettings(){
   const {connected,navigate}=useApp();const [config,setConfig]=useState<QuickSettingsValue>(),[failure,setFailure]=useState(''),[busy,setBusy]=useState(false),[saved,setSaved]=useState(false);
+  const [lockMenu,setLockMenu]=useState<{enabled:boolean;supported:boolean}>();
+  useEffect(()=>{if(connected)void rpc<{enabled:boolean;supported:boolean}>('quick.lock_menu',{}).then(setLockMenu).catch(e=>setFailure(errorText(e)));},[connected]);
   useEffect(()=>{if(!connected)return;let disposed=false;void getQuickSettings().then(v=>{if(!disposed)setConfig(v);}).catch(e=>setFailure(errorText(e)));return()=>{disposed=true;};},[connected]);
   useEffect(()=>{let disposed=false,off:(()=>void)|undefined;void subscribe(e=>{if(e.type==='quick.settings.changed')void getQuickSettings().then(v=>{if(!disposed)setConfig(v);});}).then(v=>{if(disposed)v();else off=v;});return()=>{disposed=true;off?.();};},[]);
   const update=(patch:Partial<QuickSettingsValue>)=>{setConfig(old=>old?{...old,...patch}:old);setSaved(false);};
@@ -18,6 +20,7 @@ export default function QuickSettings(){
       {config.trigger==='keyboard'&&<Field label="快捷键" hint="例如 Ctrl+Shift+Space、Alt+Q 或 F8。"><input value={config.shortcut} onChange={e=>update({shortcut:e.target.value})}/></Field>}
     </Section>
     <Section title="自动翻译"><CheckField label="自动翻译外语选区" checked={config.auto_translate} onChange={auto_translate=>update({auto_translate})}/><Field label="目标语言"><input value={config.target_language} onChange={e=>update({target_language:e.target.value})}/></Field></Section>
+    <Section title="文件占用右键菜单"><p className="muted">文件或文件夹右键 → 显示更多选项 → 查看并解除文件占用。也可选中文件、文件夹后长按触发快捷菜单。</p><Button disabled={busy||!lockMenu?.supported} onClick={()=>void (async()=>{setBusy(true);setFailure('');try{setLockMenu(await rpc('quick.lock_menu',{enabled:!lockMenu?.enabled}));}catch(e){setFailure(errorText(e));}finally{setBusy(false);}})()}>{lockMenu?.enabled?'移除右键菜单':'添加右键菜单'}</Button></Section>
     <Section title="始终显示的工具入口"><div className="quick-tool-options">{quickTools.map(([id,label])=><CheckField key={id} label={label} checked={config.tools.includes(id)} onChange={checked=>update({tools:checked?[...config.tools,id]:config.tools.filter(v=>v!==id)})}/>)}</div></Section>
     <div className="button-row"><Button variant="primary" busy={busy} onClick={()=>void save()}><Save size={16}/>{saved?'已保存':'保存设置'}</Button><Button onClick={()=>navigate('scripts')}>管理快捷脚本与触发条件</Button></div>
   </div>;

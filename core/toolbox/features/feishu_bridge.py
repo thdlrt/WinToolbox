@@ -17,6 +17,7 @@ from pathlib import Path
 
 from ._common import write_json
 from .feishu_sources import find_source_thread
+from .feishu_pending import is_acknowledgement, is_question, message_time, own_bot, prior_messages, question_history
 
 
 LOG = logging.getLogger(__name__)
@@ -25,9 +26,18 @@ MESSAGE_ID = re.compile(r'^om_[A-Za-z0-9_-]+$')
 CHAT_ID = re.compile(r'^oc_[A-Za-z0-9_-]+$')
 USER_ID = re.compile(r'^ou_[A-Za-z0-9_-]+$')
 THREAD_ID = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')
+MAX_QUESTION_PAGES = 20
 TYPES = {'text', 'post', 'image', 'file', 'audio', 'video'}
 DEFAULT = {'enabled': False, 'app_id': '', 'bot_open_id': '', 'ack_text': '塔菲思考中，喵～',
            'reply_wait_seconds': 900, 'rules': []}
+
+
+class UnrelatedGroupReply(RuntimeError):
+    """A group reply chain has no message belonging to this bot or its jobs."""
+
+
+class QuestionRoutingNeedsChoice(RuntimeError):
+    """More than one waiting chat could receive an unthreaded group answer."""
 
 
 def executable(name):
@@ -206,6 +216,10 @@ def validate_rule(raw):
         raise ValueError('规则开关必须为布尔值')
     rule['enabled'] = raw.get('enabled', False)
     rule['require_bot_mention'] = raw.get('require_bot_mention', False)
+    hours = raw.get('pending_question_hours', 168)
+    if isinstance(hours, bool) or not isinstance(hours, int) or not 0 <= hours <= 720:
+        raise ValueError('待答提问窗口应为 0–720 小时')
+    rule['pending_question_hours'] = hours
     types = raw.get('message_types', ['text', 'post'])
     if not isinstance(types, list) or not types or any(item not in TYPES for item in types):
         raise ValueError('消息类型无效')
@@ -258,7 +272,7 @@ def validate_config(raw):
     return {key: value[key] for key in DEFAULT}
 
 
-def matching_rule(event, config):
+def matching_rule(event, config, *, allow_group_reply=False):
     if event.get('type') != 'im.message.receive_v1' or event.get('sender_type') != 'user':
         return None
     if not MESSAGE_ID.fullmatch(str(event.get('message_id', ''))):
@@ -277,7 +291,10 @@ def matching_rule(event, config):
         if rule['require_bot_mention'] and not any(
                 isinstance(item, dict) and item.get('id') == config['bot_open_id']
                 for item in (event.get('mentions') or [])):
-            continue
+            parent = FeishuBridge._parent_id(event)
+            if not (allow_group_reply and rule['chat_type'] == 'group'
+                    and MESSAGE_ID.fullmatch(str(parent))):
+                continue
         return rule
     return None
 
@@ -291,8 +308,14 @@ def render_prompt(rule, event, acknowledgement):
         prompt = prompt.replace(marker, str(value))
     context = ''
     if event.get('context_source_message_id'):
-        context = (f"本条私聊是回复消息，已按来源继续当前 context。被回复的消息 ID：{event['context_source_message_id']}。"
-                   "读取该消息及必要的回复链，结合当前对话上下文理解请求。\n")
+        if event.get('context_route_kind') == 'pending_question':
+            context = (f"本条群消息仅 @机器人，已按待答提问的来源继续当前 context。原提问消息 ID：{event['context_source_message_id']}。"
+                       "先读取原提问，判断这条消息是否回答该问题；如果实际上是新话题，明确区分，不把它当成问题已解决。\n")
+        else:
+            context = (f"本条{'群聊' if rule['chat_type'] == 'group' else '私聊'}是回复消息，已按来源继续当前 context。被回复的消息 ID：{event['context_source_message_id']}。"
+                       "读取该消息及必要的回复链，结合当前对话上下文理解请求。\n")
+        if rule['chat_type'] == 'group':
+            context += '这是群成员的项目消息，沿用群规则的处理范围；路由到来源对话不代表主人私聊授权。\n'
     return (
         f"飞书监听规则“{rule['name']}”已匹配原消息。chat_id={event['chat_id']}；"
         f"message_id={event['message_id']}；sender_id={event['sender_id']}。\n"
@@ -325,6 +348,11 @@ class FeishuBridge:
         self.db.execute('CREATE TABLE IF NOT EXISTS message_contexts ('
                         'app_id TEXT NOT NULL, chat_id TEXT NOT NULL, message_id TEXT NOT NULL, '
                         'thread_id TEXT NOT NULL, source TEXT NOT NULL, created_at INTEGER NOT NULL, '
+                        'PRIMARY KEY (app_id,chat_id,message_id))')
+        self.db.execute('CREATE TABLE IF NOT EXISTS pending_questions ('
+                        'app_id TEXT NOT NULL,chat_id TEXT NOT NULL,message_id TEXT NOT NULL,'
+                        'thread_id TEXT NOT NULL,created_at REAL NOT NULL,title TEXT NOT NULL,'
+                        'targets TEXT NOT NULL,link TEXT NOT NULL,state TEXT NOT NULL,last_answer_id TEXT,'
                         'PRIMARY KEY (app_id,chat_id,message_id))')
         columns = {row[1] for row in self.db.execute('PRAGMA table_info(jobs)')}
         if 'target_thread_id' not in columns:
@@ -488,22 +516,16 @@ class FeishuBridge:
 
     def _accept(self, event):
         with self.lock:
-            rule = matching_rule(event, self.config)
+            rule = matching_rule(event, self.config, allow_group_reply=True)
             if not rule or not self._claim(event['message_id'], rule['id']):
                 return
             rule = dict(rule)
             config = dict(self.config)
             self.last_event_at = int(time.time())
-        ack = rule['ack_text'] or config['ack_text']
-        ack_id = ''
-        if ack:
-            try:
-                answer = lark_json('im', '+messages-reply', '--as', 'bot', '--message-id', event['message_id'],
-                                   '--text', ack, '--idempotency-key', event['message_id'] + ':thinking', '--format', 'json')
-                ack_id = answer.get('data', {}).get('message_id', '')
-            except Exception:
-                LOG.exception('飞书确认回复失败，继续派发 %s', event['message_id'])
-        self.workers.submit(self._process_safe, event, rule, config, ack_id)
+        implicit = rule['chat_type'] == 'group' and rule['require_bot_mention'] and not any(
+            isinstance(item, dict) and item.get('id') == config['bot_open_id']
+            for item in (event.get('mentions') or []))
+        self.workers.submit(self._process_safe, {**event, '_implicit_group_reply': implicit}, rule, config, '')
 
     def _process_safe(self, event, rule, config, ack_id):
         try:
@@ -516,26 +538,143 @@ class FeishuBridge:
         if not MESSAGE_ID.fullmatch(message_id) or not THREAD_ID.fullmatch(thread_id):
             raise RuntimeError('消息来源映射的 ID 无效')
         with self.lock:
-            previous = self._known_context(message_id, rule, config)
-            if previous and previous != thread_id:
+            row = self.db.execute('SELECT thread_id,source FROM message_contexts WHERE app_id=? AND chat_id=? AND message_id=?',
+                                  (config['app_id'], rule['chat_id'], message_id)).fetchone()
+            legacy_group = rule['chat_type'] == 'group' and row and not row[1].startswith('group:')
+            if row and row[0] != thread_id and not legacy_group:
                 raise RuntimeError('原消息的 context 映射冲突')
+            if rule['chat_type'] == 'group':
+                source = 'group:' + source
+            if legacy_group:
+                # Older group dispatches always used the default, including
+                # replies. Replace only after provenance has been reverified.
+                self.db.execute('UPDATE message_contexts SET thread_id=?,source=?,created_at=? '
+                                'WHERE app_id=? AND chat_id=? AND message_id=?',
+                                (thread_id, source, int(time.time()), config['app_id'], rule['chat_id'], message_id))
             self.db.execute('INSERT OR IGNORE INTO message_contexts VALUES (?,?,?,?,?,?)',
                             (config['app_id'], rule['chat_id'], message_id, thread_id, source, int(time.time())))
             self.db.commit()
 
     def _known_context(self, message_id, rule, config):
         with self.lock:
-            row = self.db.execute('SELECT thread_id FROM message_contexts WHERE app_id=? AND chat_id=? AND message_id=?',
+            row = self.db.execute('SELECT thread_id,source FROM message_contexts WHERE app_id=? AND chat_id=? AND message_id=?',
                                   (config['app_id'], rule['chat_id'], message_id)).fetchone()
+        if row and rule['chat_type'] == 'group' and not row[1].startswith('group:'):
+            return None
         return row[0] if row else None
 
     @staticmethod
     def _parent_id(message):
         return message.get('reply_to') or message.get('parent_id') or message.get('root_id') or ''
 
+    def _pending_question_context(self, message, rule, config):
+        hours = rule.get('pending_question_hours', 168)
+        if not hours:
+            return None
+        cutoff = time.time() - hours * 3600
+        history = []
+        token = ''
+        seen_tokens = set()
+        complete = False
+        for _ in range(MAX_QUESTION_PAGES):
+            args = ['im', '+chat-messages-list', '--as', 'bot', '--chat-id', rule['chat_id'],
+                    '--order', 'desc', '--page-size', '50', '--no-reactions', '--format', 'json']
+            if token:
+                args += ['--page-token', token]
+            answer = lark_json(*args)
+            batch = answer.get('data', {}).get('messages', [])
+            history.extend(batch)
+            token = answer.get('data', {}).get('page_token') or ''
+            timestamps = [message_time(m) for m in batch if message_time(m)]
+            if not token or not batch or (timestamps and min(timestamps) < cutoff):
+                complete = True
+                break
+            if token in seen_tokens:
+                break
+            seen_tokens.add(token)
+        if not complete:
+            raise QuestionRoutingNeedsChoice('追问窗口内的群历史未能完整读取，不能安全确定唯一来源。请用飞书“回复”对应提问，或缩短追问窗口。')
+        questions, answered = question_history(history, rule, config, message, cutoff)
+        sender_id = (message.get('sender') or {}).get('id')
+        for mid, question in questions.items():
+            if not MESSAGE_ID.fullmatch(mid):
+                continue
+            targets = [m.get('id') for m in (question.get('mentions') or [])
+                       if isinstance(m, dict) and USER_ID.fullmatch(str(m.get('id', '')))
+                       and m.get('id') != config['bot_open_id']]
+            source = self._known_context(mid, rule, config) or ''
+            if mid not in answered and not source:
+                source = find_source_thread(question) or ''
+            if source:
+                self._remember_context(mid, rule, config, source, 'pending_question')
+            with self.lock:
+                self.db.execute('INSERT INTO pending_questions VALUES (?,?,?,?,?,?,?,?,?,NULL) '
+                                'ON CONFLICT(app_id,chat_id,message_id) DO UPDATE SET '
+                                "thread_id=CASE WHEN excluded.thread_id<>'' THEN excluded.thread_id ELSE thread_id END,"
+                                'title=excluded.title,targets=excluded.targets,link=excluded.link,'
+                                "state=CASE WHEN excluded.state='answered' THEN 'answered' ELSE state END",
+                                (config['app_id'], rule['chat_id'], mid, source, message_time(question),
+                                 str(question.get('content', '')).replace('\\n', ' ').replace('\n', ' ')[:160],
+                                 json.dumps(targets), question.get('message_app_link') or '',
+                                 'answered' if mid in answered else 'open'))
+                self.db.commit()
+        # Recover completion after a toolbox restart, including answers sent
+        # with @ rather than Feishu's explicit reply relationship.
+        with self.lock:
+            for followup in prior_messages(history, rule, message):
+                if own_bot(followup, config) and not is_acknowledgement(followup, rule, config):
+                    self.db.execute("UPDATE pending_questions SET state='answered' WHERE app_id=? AND chat_id=? AND last_answer_id=?",
+                                    (config['app_id'], rule['chat_id'], self._parent_id(followup)))
+            self.db.commit()
+        with self.lock:
+            rows = self.db.execute('SELECT message_id,thread_id,title,targets,link FROM pending_questions '
+                                   "WHERE app_id=? AND chat_id=? AND state='open' AND created_at>=? "
+                                   'ORDER BY created_at DESC', (config['app_id'], rule['chat_id'], cutoff)).fetchall()
+        targeted = [row for row in rows if sender_id in json.loads(row[3])]
+        general = [row for row in rows if not json.loads(row[3])]
+        choices = targeted or general or rows
+        if not choices:
+            return None
+        if any(not row[1] for row in choices):
+            raise RuntimeError('群里有待答提问，但无法核验其来源 Codex 对话；请回复对应原问题，不会误送默认对话')
+        if len({row[1] for row in choices}) != 1:
+            summaries = '\n'.join(f'{i}. {row[2][:80]}\n{row[4]}' for i, row in enumerate(choices[:5], 1))
+            raise QuestionRoutingNeedsChoice('群里有来自不同 Codex 对话的待答提问，请用飞书“回复”对应问题：\n' + summaries)
+        selected = choices[0]
+        # Cached questions absent from current history still need a
+        # current same-chat read before they can select a destination.
+        if selected[0] not in questions:
+            current = lark_json('im', '+messages-mget', '--as', 'bot', '--message-ids', selected[0],
+                                '--no-reactions', '--format', 'json')
+            original = next((m for m in current.get('data', {}).get('messages', [])
+                             if m.get('message_id') == selected[0]), None)
+            if not original or original.get('deleted') or original.get('chat_id') != rule['chat_id'] or not own_bot(original, config) or not is_question(original):
+                with self.lock:
+                    self.db.execute("UPDATE pending_questions SET state='answered' WHERE app_id=? AND chat_id=? AND message_id=?",
+                                    (config['app_id'], rule['chat_id'], selected[0]))
+                    self.db.commit()
+                raise RuntimeError('原待答提问已删除或改变，请重发消息或回复对应原问题')
+        return selected[1], selected[0]
+
+    def _track_question_answer(self, question_id, answer_id, rule, config, *, completed=False):
+        if not question_id:
+            return
+        with self.lock:
+            if completed:
+                self.db.execute("UPDATE pending_questions SET state='answered' WHERE app_id=? AND chat_id=? AND message_id=? AND last_answer_id=?",
+                                (config['app_id'], rule['chat_id'], question_id, answer_id))
+            else:
+                self.db.execute("UPDATE pending_questions SET last_answer_id=? WHERE app_id=? AND chat_id=? AND message_id=? AND state='open'",
+                                (answer_id, config['app_id'], rule['chat_id'], question_id))
+            self.db.commit()
+
     def _resolve_context(self, message, rule, config):
         parent_id = self._parent_id(message)
-        if rule['chat_type'] != 'p2p' or not parent_id:
+        if not parent_id:
+            if rule['chat_type'] == 'group' and any(isinstance(m, dict) and m.get('id') == config['bot_open_id'] for m in (message.get('mentions') or [])):
+                pending = self._pending_question_context(message, rule, config)
+                if pending:
+                    return pending
             return rule['target_thread_id'], ''
         original_parent = parent_id
         visited = set()
@@ -555,13 +694,25 @@ class FeishuBridge:
             parent = next((item for item in answer.get('data', {}).get('messages', [])
                            if item.get('message_id') == parent_id), None)
             if not parent or parent.get('chat_id') != rule['chat_id'] or parent.get('deleted'):
-                raise RuntimeError('无法读取同一私聊内被回复的原消息')
+                raise RuntimeError('无法读取同一会话内被回复的原消息')
             sender = parent.get('sender') or {}
-            own_bot = sender.get('sender_type') in ('app', 'bot') and sender.get('id') == config['app_id']
+            own_bot = sender.get('sender_type') in ('app', 'bot') and sender.get('id') in (config['app_id'], config['bot_open_id'])
             owner = sender.get('sender_type') == 'user' and sender.get('id') == rule['sender_id']
-            if not own_bot and not owner:
-                raise RuntimeError('原消息发送者不属于当前私聊双方')
+            group_member = rule['chat_type'] == 'group' and sender.get('sender_type') == 'user' and USER_ID.fullmatch(str(sender.get('id', '')))
+            if not own_bot and not owner and not group_member:
+                if rule['chat_type'] == 'group' and sender.get('sender_type') in ('app', 'bot'):
+                    raise UnrelatedGroupReply('被回复的是其他机器人消息')
+                raise RuntimeError('原消息发送者不属于当前会话的可识别用户或机器人')
             ancestors.append(parent_id)
+            # A group question may be sent by another Codex chat under an older
+            # discussion. Its own send receipt wins over that discussion's map.
+            if own_bot and rule['chat_type'] == 'group':
+                source = find_source_thread(parent)
+                if not source:
+                    raise RuntimeError('找不到被回复机器人消息的来源 context；不会派发到默认 context')
+                for ancestor in ancestors:
+                    self._remember_context(ancestor, rule, config, source, 'codex_receipt')
+                return source, original_parent
             # A reply chain is authoritative even when the final response was sent
             # by a delegated agent. Recover standalone notification provenance only.
             next_parent = self._parent_id(parent)
@@ -570,6 +721,8 @@ class FeishuBridge:
             parent_id = next_parent
         if parent_id:
             raise RuntimeError('原消息回复链存在循环或超过 20 层，无法确定 context')
+        if rule['chat_type'] == 'group' and not bot_messages:
+            raise UnrelatedGroupReply('群回复链没有机器人消息或已知 context')
         for parent in bot_messages:
             source = find_source_thread(parent)
             if source:
@@ -590,11 +743,20 @@ class FeishuBridge:
                 raise RuntimeError('原消息的会话或发送者与飞书事件不一致')
             if not str(message.get('content', '')).strip():
                 raise RuntimeError('原消息内容为空')
-            if rule['chat_type'] == 'p2p' and self._parent_id(event) and not self._parent_id(message):
+            if self._parent_id(event) and not self._parent_id(message):
                 raise RuntimeError('无法从原消息复核回复关系，暂不派发到默认 context')
             target_thread_id, source_message_id = self._resolve_context(message, rule, config)
-            event = {**event, 'context_source_message_id': source_message_id}
+            event = {**event, 'context_source_message_id': source_message_id,
+                     'context_route_kind': 'reply' if self._parent_id(message) else 'pending_question' if source_message_id else 'default'}
             self._remember_context(message_id, rule, config, target_thread_id, 'dispatch')
+            ack = rule['ack_text'] or config['ack_text']
+            if ack and not ack_id:
+                try:
+                    acknowledgement = lark_json('im', '+messages-reply', '--as', 'bot', '--message-id', message_id,
+                                               '--text', ack, '--idempotency-key', message_id + ':thinking', '--format', 'json')
+                    ack_id = acknowledgement.get('data', {}).get('message_id', '')
+                except Exception:
+                    LOG.exception('飞书确认回复失败，继续派发 %s', message_id)
             if ack_id:
                 self._remember_context(ack_id, rule, config, target_thread_id, 'acknowledgement')
             with self.lock:
@@ -608,6 +770,26 @@ class FeishuBridge:
             finally:
                 client.close()
             self._finish(message_id, 'dispatched')
+            self._track_question_answer(source_message_id, message_id, rule, config)
+        except QuestionRoutingNeedsChoice as exc:
+            self._finish(message_id, 'needs_context', detail=str(exc))
+            try:
+                sent = lark_json('im', '+messages-reply', '--as', 'bot', '--message-id', message_id,
+                                 '--text', '喵，' + str(exc), '--idempotency-key', message_id + ':context-choice', '--format', 'json')
+                reply_id = sent.get('data', {}).get('message_id', '')
+                if not MESSAGE_ID.fullmatch(reply_id):
+                    raise RuntimeError('来源选择提示没有返回有效消息 ID')
+                self._finish(message_id, 'needs_context', reply_id, detail=str(exc))
+            except Exception:
+                LOG.exception('飞书来源选择提示未能送达：%s', message_id)
+            return
+        except UnrelatedGroupReply as exc:
+            if event.get('_implicit_group_reply'):
+                self._finish(message_id, 'ignored', detail=str(exc))
+                return
+            self._finish(message_id, 'failed', detail=str(exc))
+            self._blocked(message_id, str(exc))
+            return
         except Exception as exc:
             self._finish(message_id, 'failed', detail=str(exc))
             self._blocked(message_id, str(exc))
@@ -621,6 +803,7 @@ class FeishuBridge:
                     sender = item.get('sender') or {}
                     if item.get('reply_to') == message_id and sender.get('id') == config['app_id'] and item.get('message_id') != ack_id:
                         self._remember_context(item['message_id'], rule, config, target_thread_id, 'final_reply')
+                        self._track_question_answer(source_message_id, message_id, rule, config, completed=True)
                         self._finish(message_id, 'sent', item['message_id'])
                         return
             except Exception as exc:

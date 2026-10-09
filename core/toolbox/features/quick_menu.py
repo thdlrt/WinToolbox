@@ -16,10 +16,11 @@ from urllib.parse import quote, unquote
 from ..settings import atomic_json
 from .selection_language import is_target_language
 
-TOOLS = ['home', 'ram', 'relay', 'filesync', 'memory', 'media', 'live', 'captions',
+TOOLS = ['clipboard', 'home', 'ram', 'relay', 'filesync', 'memory', 'media', 'live', 'captions',
          'practice', 'expenses', 'network', 'shizuku', 'fnconnect', 'gpu', 'codex', 'scripts', 'plugins', 'settings']
 TRIGGERS = ['always', 'text', 'foreign_text', 'files', 'file_only', 'folders', 'selection']
 BUILTINS = [
+    {'id': 'file_locks', 'name': '查看 / 解除占用', 'trigger': 'files', 'description': '检查文件、文件夹及子项的占用，确认关闭或结束后复查；不自动删除'},
     {'id': 'dissolve', 'name': '解散文件夹', 'trigger': 'folders', 'description': '将内容移至上一级，再移除空文件夹；先预览，不覆盖同名项'},
     {'id': 'paths', 'name': '复制完整路径', 'trigger': 'files', 'description': '每行一个选中项目的完整路径'},
     {'id': 'names', 'name': '提取文件名', 'trigger': 'files', 'description': '每行一个文件或文件夹名称'},
@@ -33,7 +34,7 @@ BUILTINS = [
     {'id': 'base64_decode', 'name': 'Base64 解码', 'trigger': 'text', 'description': '将 Base64 解码为 UTF-8 文本'},
 ]
 DEFAULTS = {'enabled': True, 'trigger': 'middle', 'shortcut': 'Ctrl+Shift+Space', 'hold_ms': 450,
-            'auto_translate': True, 'target_language': '简体中文', 'tools': ['home', 'relay', 'scripts'],
+            'auto_translate': True, 'target_language': '简体中文', 'tools': ['clipboard', 'home', 'relay', 'scripts'],
             'actions': {}, 'custom': []}
 
 
@@ -103,7 +104,7 @@ class QuickMenu:
             raise ValueError('快捷键无效')
         if not isinstance(value['target_language'], str) or not 1 <= len(value['target_language'].strip()) <= 40:
             raise ValueError('请输入目标语言')
-        if not isinstance(value['tools'], list) or len(value['tools']) > 18 or len(set(value['tools'])) != len(value['tools']) or any(t not in TOOLS for t in value['tools']):
+        if not isinstance(value['tools'], list) or len(value['tools']) > len(TOOLS) or len(set(value['tools'])) != len(value['tools']) or any(t not in TOOLS for t in value['tools']):
             raise ValueError('固定工具入口无效')
         if not isinstance(value['actions'], dict) or any(k not in {a['id'] for a in BUILTINS} for k in value['actions']):
             raise ValueError('快捷脚本设置无效')
@@ -246,14 +247,78 @@ class QuickMenu:
         action = next((a for a in self.actions()['actions'] if a['id'] == params.get('action') and a.get('enabled', True)), None)
         if not action or not matches(action['trigger'], context):
             raise ValueError('当前选区不符合此脚本的触发条件')
+        if action['id'] == 'file_locks':
+            with self.lock:
+                self._check_lock_job(context)
+                job = self.app.jobs.submit('quick.action', {'context_id': context['id'], 'action': action['id']})
+                context['lock_job'] = job['id']
+                return job
         if action['id'] == 'dissolve' and self.preview(params)['token'] != params.get('token'):
             raise ValueError('请先预览并确认解散文件夹；内容变化后需要重新预览')
         return self.app.jobs.submit('quick.action', {'context_id': context['id'], 'action': action['id'], 'token': params.get('token')})
 
+    def _check_lock_job(self, context):
+        if context.get('lock_job') and self.app.jobs.get(context['lock_job'])['status'] in ('queued', 'running', 'cancelling'):
+            raise ValueError('占用操作正在执行，请稍候')
+
+    def release(self, params):
+        context = self.context(params)
+        if params.get('confirm') is not True or params.get('mode') not in ('close', 'terminate'):
+            raise ValueError('请先确认关闭方式；强制结束可能丢失未保存内容')
+        with self.lock:
+            self._check_lock_job(context)
+            process = next((p for p in context.get('file_locks', {}).get('processes', []) if p['key'] == params.get('process')), None)
+            if not process or not process['can_release']:
+                raise ValueError('请重新检查并选择可操作的占用进程')
+            job = self.app.jobs.submit('quick.release', {'context_id': context['id'], 'process': process['key'], 'mode': params['mode']})
+            context['lock_job'] = job['id']
+            return job
+
+    def release_job(self, job):
+        from . import file_locks
+        context = self.context({'id': job.params['context_id']})
+        current = file_locks.scan(context['paths'], job.check_cancelled)
+        with self.lock:
+            context['file_locks'] = current
+        process = next((p for p in current['processes'] if p['key'] == job.params['process']), None)
+        if not process:
+            message = '原占用进程已退出或不再占用；已重新检查'
+        else:
+            job.check_cancelled()
+            message = file_locks.WindowsLocks().release(process, job.params['mode'])
+            job.mark_committed()
+        result = file_locks.scan(context['paths'])
+        with self.lock:
+            context['file_locks'] = result
+            context['output'] = message
+        return {'context_id': context['id'], 'ready': True}
+
+    def lock_menu(self, params):
+        from .file_locks import context_menu
+        with self.lock:
+            path = self.app.data_dir / 'file-locks-menu.json'
+            saved = json.loads(path.read_text('utf-8')) if path.exists() else {}
+            enabled = params.get('enabled')
+            if params.get('initialize') and saved.get('enabled') is not False:
+                state = context_menu()
+                if state['supported'] and not state['enabled']:
+                    enabled = True
+            result = context_menu(enabled)
+            if type(enabled) is bool:
+                atomic_json(path, {'enabled': enabled})
+            return result
+
     def run_job(self, job):
         context = self.context({'id': job.params['context_id']})
         name, text, paths = job.params['action'], context['text'], context['paths']
-        if name == 'dissolve':
+        if name == 'file_locks':
+            from .file_locks import scan
+            result = scan(paths, job.check_cancelled)
+            with self.lock:
+                context['file_locks'] = result
+                context['output'] = ''
+            return {'context_id': context['id'], 'ready': True}
+        elif name == 'dissolve':
             plan = self.preview({'id': context['id']})
             if plan['token'] != job.params.get('token'):
                 raise ValueError('文件夹内容发生变化，请重新预览')
@@ -344,7 +409,8 @@ def register(app):
     service = QuickMenu(app)
     for name, handler in [('settings', service.settings), ('save', service.save), ('actions', service.actions),
                           ('capture', service.capture), ('snapshot', service.snapshot), ('translate', service.translate),
-                          ('preview', service.preview), ('run', service.run)]:
+                          ('preview', service.preview), ('run', service.run), ('release', service.release), ('lock_menu', service.lock_menu)]:
         app.register('quick.' + name, handler)
     app.jobs.register('quick.translate', service.translate_job)
     app.jobs.register('quick.action', service.run_job)
+    app.jobs.register('quick.release', service.release_job)

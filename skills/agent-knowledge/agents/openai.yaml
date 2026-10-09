@@ -1,6 +1,6 @@
 interface:
   display_name: "项目记忆"
-  short_description: "检索和维护项目与全局记忆"
-  default_prompt: "使用 $agent-knowledge 读取当前项目最相关的记忆与全局知识。"
+  short_description: "检索和维护项目与全局知识，同步项目协作规则到工具箱记忆"
+  default_prompt: "使用 $agent-knowledge 检索相关知识，并将本次需保存的项目规则同步到 AGENTS.md 和工具箱项目知识。"
 policy:
   allow_implicit_invocation: true

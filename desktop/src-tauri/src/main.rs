@@ -226,12 +226,12 @@ fn main(){
     use tauri::menu::{Menu,MenuItem,CheckMenuItem};use tauri::tray::TrayIconBuilder;
     use tauri_plugin_global_shortcut::{GlobalShortcutExt,ShortcutState};
     let app=tauri::Builder::default().manage(Bridge::default()).manage(CaptionsWindow::default()).manage(orb::OrbState::default()).manage(quick_menu::QuickState::default())
-      .plugin(tauri_plugin_single_instance::init(|app,args,_|{if args.iter().any(|a|a=="--quit"){app.exit(0);return}if !args.iter().any(|a|a=="--silent"){let _=orb::open(app,"home");}relay_launch(app,args);}))
+      .plugin(tauri_plugin_single_instance::init(|app,args,_|{if args.iter().any(|a|a=="--quit"){app.exit(0);return}if quick_menu::file_locks_launch(app,&args){return}if !args.iter().any(|a|a=="--silent"){let _=orb::open(app,"home");}relay_launch(app,args);}))
       .plugin(tauri_plugin_global_shortcut::Builder::new().build())
       .invoke_handler(tauri::generate_handler![rpc,quick_menu::quick_settings,quick_menu::quick_snapshot,quick_menu::quick_hide,quick_menu::quick_copy,orb::set_orb,orb::orb_resize,orb::orb_save_position,orb::orb_action,drag_files,install_update,pick_files,pick_directory,pick_save,app_paths,open_path,open_external,save_course_file,set_overlay,get_captions_window,set_captions_window,set_captions_click_through])
       .setup(|app|{
           webview_memory::watch(app.handle().clone());
-          if !std::env::args().any(|a|a=="--silent") {
+          if !std::env::args().any(|a|a=="--silent" || a=="--file-locks") {
               if let Some(w)=app.get_webview_window("main"){w.show()?;}
           }
           let orb_handle=app.handle().clone();
@@ -285,9 +285,13 @@ fn main(){
             if let Err(message)=rpc_blocking(&handle,&handle.state::<Bridge>(),"relay.initialize_menu".into(),json!({})) {
                 eprintln!("文件中转站菜单注册失败: {message}");
             }
+            if let Err(message)=rpc_blocking(&handle,&handle.state::<Bridge>(),"quick.lock_menu".into(),json!({"initialize":true})) {
+                eprintln!("文件占用菜单注册失败: {message}");
+            }
         });
     }
     relay_launch(app.handle(),std::env::args().collect());
+    quick_menu::file_locks_launch(app.handle(),&std::env::args().collect::<Vec<_>>());
     app.run(|app,event|{if matches!(event,tauri::RunEvent::Exit){shutdown(app)}});
 }
 

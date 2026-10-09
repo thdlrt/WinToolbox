@@ -1,11 +1,12 @@
 import type { Job } from './api';
 
-export type ToolScope = 'media' | 'live' | 'presets' | 'models' | 'backups' | 'plugins' | 'knowledge' | 'expenses' | 'network';
+export type ToolScope = 'media' | 'netease' | 'live' | 'presets' | 'models' | 'backups' | 'plugins' | 'knowledge' | 'expenses' | 'network';
 export const processing = (status: string) => ['queued', 'pending', 'running', 'cancelling'].includes(status);
 export const retryable = (status: string) => ['failed', 'cancelled', 'canceled', 'interrupted'].includes(status);
 const liveMedia = (job: Job) => job.params.origin === 'live' || (Array.isArray(job.params.paths) && job.params.paths.some(path => typeof path === 'string' && /[\\/]sessions[\\/]/i.test(path)));
 export function belongsToTool(job: Job, scope: ToolScope, collectionId?: string): boolean {
   switch (scope) {
+    case 'netease': return job.tool.startsWith('netease.');
     case 'expenses': return job.tool === 'expenses.export' || job.tool === 'expenses.sync';
     case 'network': return job.tool === 'network.run';
     case 'media': return job.tool === 'media' && !liveMedia(job);

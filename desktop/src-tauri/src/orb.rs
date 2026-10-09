@@ -108,7 +108,7 @@ pub fn orb_save_position(app:AppHandle)->Result<OrbLayout,String>{
 #[tauri::command]
 pub async fn orb_action(app:AppHandle,action:String)->Result<(),String>{
     match action.as_str(){
-        "home"|"relay"|"captions"|"settings"|"ram"|"orb-settings"|"filesync"|"memory"|"media"|"live"|"practice"|"phonetics"|"expenses"|"network"|"shizuku"|"fnconnect"|"gpu"|"codex"|"files"|"scripts"|"quick-settings"|"plugins"=>open(&app,&action),
+        "clipboard"|"home"|"relay"|"captions"|"settings"|"ram"|"orb-settings"|"filesync"|"memory"|"media"|"live"|"practice"|"phonetics"|"expenses"|"network"|"shizuku"|"fnconnect"|"gpu"|"codex"|"files"|"scripts"|"quick-settings"|"plugins"=>open(&app,&action),
         "caption-window"=>super::set_captions_window(app,true).await,
         "hide"=>set_orb(app,false).await,
         "quit"=>{app.exit(0);Ok(())},

@@ -1,0 +1,4 @@
+interface:
+  display_name: "网易云音乐"
+  short_description: "读取喜欢的音乐和歌单，导出列表、下载可用歌曲，并批量转换 NCM 为 MP3"
+  default_prompt: "使用 $netease-music 获取我的网易云音乐列表，按选择下载歌曲或转换本地 NCM。"

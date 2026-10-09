@@ -29,6 +29,7 @@ def main():
         with writer_lock:
             print(json.dumps(value, ensure_ascii=False, allow_nan=False, default=str), flush=True)
     app = App(args.data_dir, emit=lambda event: send({"jsonrpc":"2.0","method":"event","params":event}))
+    app.clipboard_history.start()
     pool = ThreadPoolExecutor(max_workers=8, thread_name_prefix="rpc")
     def handle(message):
         id = message.get("id")

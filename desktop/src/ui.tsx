@@ -44,6 +44,9 @@ export const statusLabel = (value: string) =>
 export const toolLabel = (value: string) =>
   ({
     media: "音视频处理",
+    "netease.convert": "NCM 格式转换",
+    "netease.export": "网易云列表导出",
+    "netease.download": "网易云歌曲下载",
     "practice.generate": "段落朗读",
     "practice.fragment": "练习片段朗读",
     knowledge: "资料库索引",

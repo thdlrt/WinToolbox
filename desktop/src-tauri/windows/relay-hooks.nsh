@@ -29,6 +29,14 @@
   Push $3
   !insertmacro RelayRemoveVerb "*"
   !insertmacro RelayRemoveVerb "Directory"
+  ReadRegStr $0 HKCU "Software\Classes\*\shell\WinToolboxFileLocks\command" ""
+  ${If} $0 == '$\"$INSTDIR\${MAINBINARYNAME}.exe$\" --file-locks $\"%1$\"'
+    DeleteRegKey HKCU "Software\Classes\*\shell\WinToolboxFileLocks"
+  ${EndIf}
+  ReadRegStr $0 HKCU "Software\Classes\Directory\shell\WinToolboxFileLocks\command" ""
+  ${If} $0 == '$\"$INSTDIR\${MAINBINARYNAME}.exe$\" --file-locks $\"%1$\"'
+    DeleteRegKey HKCU "Software\Classes\Directory\shell\WinToolboxFileLocks"
+  ${EndIf}
   !insertmacro IsShortcutTarget "$SENDTO\文件中转站.lnk" "$INSTDIR\${MAINBINARYNAME}.exe"
   Pop $0
   ${If} $0 = 1

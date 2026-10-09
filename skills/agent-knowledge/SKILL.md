@@ -1,15 +1,25 @@
 ---
 name: agent-knowledge
-description: Recall and maintain project and global knowledge in WinToolbox, including offline SSH projects and WebDAV synchronization. Use for durable project context, tasks, reusable lessons, initialization, migration and knowledge curation.
+description: Recall and maintain project and global knowledge in WinToolbox, including offline SSH projects and WebDAV synchronization. Use when the user asks to remember project rules, add durable knowledge to AGENTS.md, or update the toolbox project memory, as well as for tasks, reusable lessons, initialization, migration and knowledge curation.
 metadata:
   short-description: 工具箱项目记忆与跨设备知识
 ---
 
 # Agent Knowledge
 
-项目记忆由 WinToolbox 管理，SQLite 操作日志是权威数据。项目只保存 `.agent/toolbox.json` 或已有 `.agents/toolbox.json` 身份连接；本机目录与 SSH 位置由当前设备登记。中央 WebDAV 只传递不可变记录和附件，不传递数据库、设备目录或凭据。Obsidian 旧库仅作迁移证据，不再写入。
+项目记忆由 WinToolbox 管理，SQLite 操作日志是权威数据。项目通过 `.agent/toolbox.json` 或已有 `.agents/toolbox.json` 连接知识库；本机目录与 SSH 位置由当前设备登记。AGENTS.md 承载执行约定，但文件修改不会自动写入工具箱项目记忆。中央 WebDAV 只传递不可变记录和附件，不传递数据库、设备目录或凭据。Obsidian 旧库仅作迁移证据，不再写入。
 
 使用本技能目录下的 `node scripts/agent-knowledge.mjs`；Windows、WSL、远程服务器的入口由各自用户状态目录 `client.json` 指定。未配置时按提示在工具箱初始化或安装远端 CLI，不自行猜测数据目录另建中央库。
+
+## 保存项目规则
+
+- 用户要求“记住项目约定”“加一些项目知识到 agentmd / AGENTS.md”等持久规则时，使用本技能。在已绑定工具箱的项目中，维护 AGENTS.md 对应规则，并通过 `capture` 保存为 `kind: knowledge`、`scope: project` 的知识记录。不能只改文件就报告“已记入项目记忆”。用户明确只改文件或不写知识库时，以当前要求为准。
+- 先确认项目身份，再用简短关键词 `recall` 查找相关记录。已有记录先 `read`，保留 ID、元数据和当前 `heads`，以 `parents` 更新；没有相关记录才新增。按主题组织规则，避免每次补充都重复新增整套知识。
+- 两处已有相同规则时，后续修改同步更新对应内容，保留用户定制并注明来源；遇到并发版本先读取合并。不要把普通代码修改、临时进度或整篇 AGENTS.md 无差别复制成知识，也不把全部知识自动塞进 AGENTS.md。
+- 写后用 `read` 核对正文、项目归属和冲突状态，并用 `recall` 确认可检索。最终说明 AGENTS.md 与工具箱知识各自是否已更新；本地录入成功不等于已完成 WebDAV 同步，也不等于界面已刷新。
+- 未绑定项目、CLI 不可用或写入失败时，保留已授权的文件修改，明确说明知识库尚未写入及原因；不另建猜测路径的数据库、不伪报同步成功。项目登记仍遵循 `init` 的授权要求。
+
+## CLI 与记录维护
 
 - `recall --project ROOT --query TEXT --limit 5 --max-chars 8000`：只读，项目优先，再补充全局知识。未找到时收窄查询，不扫描任意源码目录。
 - `read ID`：读取原文、关联与 `heads`。`resume ID` 为兼容别名。

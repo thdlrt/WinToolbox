@@ -10,6 +10,7 @@ interface Rule {
   id: string; name: string; enabled: boolean; chat_type: 'p2p' | 'group'; chat_id: string;
   sender_id: string; require_bot_mention: boolean; target_thread_id: string;
   prompt: string; message_types: MessageType[]; ack_text: string; keyword: string;
+  pending_question_hours: number;
 }
 interface Config { enabled: boolean; app_id: string; bot_open_id: string; ack_text: string; reply_wait_seconds: number; rules: Rule[] }
 interface Job { message_id: string; rule_id: string; status: string; reply_id?: string; updated_at: number; detail?: string; target_thread_id?: string }
@@ -22,7 +23,7 @@ const messageTypes: { id: MessageType; label: string }[] = [
 const initialPrompt = '请读取并核验飞书原消息，按消息内容完成请求。处理完毕后以机器人身份回复原消息。';
 const newRule = (): Rule => ({ id: crypto.randomUUID().replaceAll('-', ''), name: '', enabled: true,
   chat_type: 'p2p', chat_id: '', sender_id: '', require_bot_mention: false,
-  target_thread_id: '', prompt: initialPrompt, message_types: ['text', 'post'], ack_text: '', keyword: '' });
+  target_thread_id: '', prompt: initialPrompt, message_types: ['text', 'post'], ack_text: '', keyword: '', pending_question_hours: 168 });
 
 export default function FeishuBridgePanel() {
   const { connected, error, success } = useApp();
@@ -69,9 +70,10 @@ export default function FeishuBridgePanel() {
       {selected && <div className="feishu-editor"><div className="form-grid"><Field label="规则名称"><input value={selected.name} onChange={e => changeRule(selected.id, { name: e.target.value })} placeholder="例如：主人私聊" /></Field><Field label="会话类型"><select value={selected.chat_type} onChange={e => changeRule(selected.id, { chat_type: e.target.value as Rule['chat_type'] })}><option value="p2p">私聊</option><option value="group">群聊</option></select></Field></div>
         <div className="form-grid"><Field label="飞书 chat_id"><input value={selected.chat_id} onChange={e => changeRule(selected.id, { chat_id: e.target.value })} placeholder="oc_…" spellCheck={false} /></Field><Field label={selected.chat_type === 'p2p' ? '发送者 open_id（必填）' : '发送者 open_id（可选）'}><input value={selected.sender_id} onChange={e => changeRule(selected.id, { sender_id: e.target.value })} placeholder="ou_…" spellCheck={false} /></Field></div>
         <Field label="消息关键词（可选）" hint="仅处理正文包含此文本的消息；留空则不限制。"><input value={selected.keyword || ''} onChange={e => changeRule(selected.id, { keyword: e.target.value })} placeholder="例如：构建" /></Field>
-        <Field label={selected.chat_type === 'p2p' ? '默认 Codex 对话 ID' : 'Codex 对话 ID'} hint={selected.chat_type === 'p2p' ? '直接发消息使用默认对话；回复消息继续来源 context。来源无法确认时提示失败。' : '消息会送到这个本机对话，沿用该对话的权限和上下文。'}><input value={selected.target_thread_id} onChange={e => changeRule(selected.id, { target_thread_id: e.target.value })} placeholder="对话 UUID" spellCheck={false} /></Field>
+        <Field label="默认 Codex 对话 ID" hint={selected.chat_type === 'group' ? '回复按来源继续；仅 @ 时优先接续待答提问，没有待答提问才用默认。' : '新消息使用默认对话；回复消息继续来源对话。来源无法确认时提示失败。'}><input value={selected.target_thread_id} onChange={e => changeRule(selected.id, { target_thread_id: e.target.value })} placeholder="对话 UUID" spellCheck={false} /></Field>
+        {selected.chat_type === 'group' && <Field label="待答提问追问窗口（小时）" hint="默认 168 小时（7 天）；0 关闭仅 @ 时接续提问。多个来源时提示回复对应问题。"><input type="number" min="0" max="720" value={selected.pending_question_hours} onChange={e => changeRule(selected.id, { pending_question_hours: Number(e.target.value) })} /></Field>}
         <div className="feishu-thread-actions"><Button busy={busy === 'threads'} onClick={listThreads}><RefreshCw size={14} />读取可用对话</Button>{threads.length > 0 && <select aria-label="选择 Codex 对话" value="" onChange={e => changeRule(selected.id, { target_thread_id: e.target.value })}><option value="">选择本机对话…</option>{threads.map(thread => <option key={thread.id} value={thread.id}>{thread.title} · {thread.id.slice(0, 8)}</option>)}</select>}</div>
-        <div className="inline-checks"><CheckField checked={selected.enabled} onChange={enabled => changeRule(selected.id, { enabled })} label="启用这条规则" />{selected.chat_type === 'group' && <CheckField checked={selected.require_bot_mention} onChange={require_bot_mention => changeRule(selected.id, { require_bot_mention })} label="必须 @机器人" />}</div>
+        <div className="inline-checks"><CheckField checked={selected.enabled} onChange={enabled => changeRule(selected.id, { enabled })} label="启用这条规则" />{selected.chat_type === 'group' && <CheckField checked={selected.require_bot_mention} onChange={require_bot_mention => changeRule(selected.id, { require_bot_mention })} label="新消息必须 @机器人" hint="回复机器人问题或已处理消息时无需再次 @。" />}</div>
         <Field label="接收的消息类型"><div className="feishu-types">{messageTypes.map(item => <label key={item.id}><input type="checkbox" checked={selected.message_types.includes(item.id)} onChange={e => changeRule(selected.id, { message_types: e.target.checked ? [...selected.message_types, item.id] : selected.message_types.filter(value => value !== item.id) })} />{item.label}</label>)}</div></Field>
         <Field label="单独的思考中回复（可选）"><input value={selected.ack_text} onChange={e => changeRule(selected.id, { ack_text: e.target.value })} placeholder="留空使用默认回复" /></Field>
         <Field label="任务提示词" hint="可用 {rule_name}、{chat_id}、{message_id}、{sender_id}、{acknowledgement}。监听器会自动附加身份复核和回飞书要求。"><textarea rows={10} value={selected.prompt} onChange={e => changeRule(selected.id, { prompt: e.target.value })} /></Field>

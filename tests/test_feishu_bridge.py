@@ -119,14 +119,133 @@ def test_plain_dm_and_group_keep_configured_targets(bridge):
     cfg = config()
     for rule in cfg['rules']:
         assert bridge._resolve_context(message(), rule, cfg) == (rule['target_thread_id'], '')
-    with patch('toolbox.features.feishu_bridge.lark_json') as lark:
-        assert bridge._resolve_context(message(reply_to='om_parent'), cfg['rules'][1], cfg)[0] == cfg['rules'][1]['target_thread_id']
-        lark.assert_not_called()
 
 
-def test_known_reply_context_survives_restart_and_default_change(tmp_path):
+def test_group_reply_selects_known_source_without_requiring_another_mention(bridge):
     cfg = config()
-    rule = cfg['rules'][0]
+    rule = cfg['rules'][1]
+    source = event(chat_type='group', chat_id=rule['chat_id'], sender_id='ou_member123', reply_to='om_question')
+    assert matching_rule(source, cfg, allow_group_reply=True) == rule
+    assert matching_rule({**source, 'sender_type': 'app'}, cfg, allow_group_reply=True) is None
+    bridge._remember_context('om_question', rule, cfg, OTHER_THREAD, 'test')
+    assert bridge._resolve_context(message(reply_to='om_question'), rule, cfg) == (OTHER_THREAD, 'om_question')
+
+
+def test_group_question_receipt_wins_over_older_discussion_default(bridge):
+    cfg = config()
+    rule = cfg['rules'][1]
+    bridge._remember_context('om_old_discussion', rule, cfg, rule['target_thread_id'], 'dispatch')
+    question = message('om_question', chat_id=rule['chat_id'], reply_to='om_old_discussion')
+    with patch('toolbox.features.feishu_bridge.lark_json', return_value=response(question)), \
+         patch('toolbox.features.feishu_bridge.find_source_thread', return_value=OTHER_THREAD) as find:
+        assert bridge._resolve_context(message(reply_to='om_question'), rule, cfg) == (OTHER_THREAD, 'om_question')
+        find.assert_called_once_with(question)
+    assert bridge._known_context('om_question', rule, cfg) == OTHER_THREAD
+    assert bridge._known_context('om_old_discussion', rule, cfg) == rule['target_thread_id']
+
+
+def test_group_followup_from_another_member_keeps_question_source(bridge):
+    cfg = config()
+    rule = cfg['rules'][1]
+    bridge._remember_context('om_question', rule, cfg, OTHER_THREAD, 'test')
+    member_reply = message('om_member_reply', chat_id=rule['chat_id'], reply_to='om_question',
+                           sender={'id': 'ou_member123', 'sender_type': 'user'})
+    with patch('toolbox.features.feishu_bridge.lark_json', return_value=response(member_reply)):
+        assert bridge._resolve_context(message(reply_to='om_member_reply'), rule, cfg) == (OTHER_THREAD, 'om_member_reply')
+    assert bridge._known_context('om_member_reply', rule, cfg) == OTHER_THREAD
+
+
+def test_unknown_group_bot_question_never_uses_old_default(bridge):
+    cfg = config()
+    rule = cfg['rules'][1]
+    bridge._remember_context('om_old_discussion', rule, cfg, rule['target_thread_id'], 'dispatch')
+    question = message(chat_id=rule['chat_id'], reply_to='om_old_discussion')
+    with patch('toolbox.features.feishu_bridge.lark_json', return_value=response(question)), \
+         patch('toolbox.features.feishu_bridge.find_source_thread', return_value=None):
+        with pytest.raises(RuntimeError, match='不会派发到默认'):
+            bridge._resolve_context(message(reply_to='om_parent'), rule, cfg)
+
+
+def test_legacy_group_default_mapping_is_recovered_from_real_question_receipt(bridge):
+    cfg = config()
+    rule = cfg['rules'][1]
+    bridge.db.execute('INSERT INTO message_contexts VALUES (?,?,?,?,?,?)',
+                      (cfg['app_id'], rule['chat_id'], 'om_parent', rule['target_thread_id'], 'dispatch', 1))
+    bridge.db.commit()
+    assert bridge._known_context('om_parent', rule, cfg) is None
+    parent = message(chat_id=rule['chat_id'], reply_to='om_question',
+                     sender={'id': 'ou_member123', 'sender_type': 'user'})
+    question = message('om_question', chat_id=rule['chat_id'])
+    with patch('toolbox.features.feishu_bridge.lark_json', side_effect=[response(parent), response(question)]), \
+         patch('toolbox.features.feishu_bridge.find_source_thread', return_value=OTHER_THREAD):
+        assert bridge._resolve_context(message(reply_to='om_parent'), rule, cfg)[0] == OTHER_THREAD
+    assert bridge._known_context('om_parent', rule, cfg) == OTHER_THREAD
+    with pytest.raises(RuntimeError, match='冲突'):
+        bridge._remember_context('om_parent', rule, cfg, rule['target_thread_id'], 'dispatch')
+
+
+@pytest.mark.parametrize('parent_sender', [
+    {'id': 'ou_somebody', 'sender_type': 'user'},
+    {'id': 'cli_otherbot', 'sender_type': 'app'},
+])
+def test_unrelated_group_reply_is_silent_and_sends_no_ack(bridge, parent_sender):
+    cfg = config()
+    rule = cfg['rules'][1]
+    source = event(chat_type='group', chat_id=rule['chat_id'], sender_id='ou_member123',
+                   reply_to='om_parent', _implicit_group_reply=True)
+    incoming = message(source['message_id'], chat_id=rule['chat_id'], reply_to='om_parent',
+                       sender={'id': source['sender_id'], 'sender_type': 'user'})
+    parent = message(chat_id=rule['chat_id'], sender=parent_sender)
+    bridge._claim(source['message_id'], rule['id'])
+    with patch('toolbox.features.feishu_bridge.lark_json', side_effect=[response(incoming), response(parent)]) as lark, \
+         patch('toolbox.features.feishu_bridge.connect_codex') as connect, \
+         patch.object(bridge, '_blocked') as blocked:
+        bridge._process(source, rule, cfg)
+        assert lark.call_count == 2
+        connect.assert_not_called()
+        blocked.assert_not_called()
+        assert bridge.status()['recent'][0]['status'] == 'ignored'
+
+
+def test_group_dispatch_rechecks_reply_and_maps_request_ack_answer(bridge):
+    cfg = config()
+    rule = cfg['rules'][1]
+    source = event(chat_type='group', chat_id=rule['chat_id'], sender_id='ou_member123', reply_to='om_question')
+    incoming = message(source['message_id'], chat_id=rule['chat_id'], reply_to='om_question',
+                       sender={'id': source['sender_id'], 'sender_type': 'user'})
+    bridge._remember_context('om_question', rule, cfg, OTHER_THREAD, 'test')
+    bridge._claim(source['message_id'], rule['id'])
+    with patch('toolbox.features.feishu_bridge.lark_json', side_effect=[response(incoming),
+            {'ok': True, 'data': {'message_id': 'om_ack'}},
+            response(message('om_answer', chat_id=rule['chat_id'], reply_to=source['message_id']))]), \
+         patch('toolbox.features.feishu_bridge.connect_codex') as connect:
+        bridge._process(source, rule, cfg)
+        connect.assert_called_once_with(OTHER_THREAD, launch=True)
+        prompt = connect.return_value.tool.call_args.args[1]['prompt']
+        assert '本条群聊是回复消息' in prompt and '不代表主人私聊授权' in prompt
+        for mid in (source['message_id'], 'om_ack', 'om_answer'):
+            assert bridge._known_context(mid, rule, cfg) == OTHER_THREAD
+        assert bridge.status()['recent'][0]['status'] == 'sent'
+
+
+def test_group_missing_verified_reply_relation_cannot_use_default(bridge):
+    cfg = config()
+    rule = cfg['rules'][1]
+    source = event(chat_type='group', chat_id=rule['chat_id'], sender_id='ou_member123', reply_to='om_question')
+    incoming = message(source['message_id'], chat_id=rule['chat_id'],
+                       sender={'id': source['sender_id'], 'sender_type': 'user'})
+    bridge._claim(source['message_id'], rule['id'])
+    with patch('toolbox.features.feishu_bridge.lark_json', return_value=response(incoming)), \
+         patch('toolbox.features.feishu_bridge.connect_codex') as connect, patch.object(bridge, '_blocked'):
+        bridge._process(source, rule, cfg)
+        connect.assert_not_called()
+        assert '复核回复关系' in bridge.status()['recent'][0]['detail']
+
+
+@pytest.mark.parametrize('rule_index', [0, 1])
+def test_known_reply_context_survives_restart_and_default_change(tmp_path, rule_index):
+    cfg = config()
+    rule = cfg['rules'][rule_index]
     service = FeishuBridge(FakeApp(tmp_path))
     service._remember_context('om_parent', rule, cfg, OTHER_THREAD, 'test')
     service.close()

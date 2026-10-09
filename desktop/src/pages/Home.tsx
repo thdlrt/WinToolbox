@@ -6,11 +6,13 @@ import { toolIcons } from '../toolIcons';
 import { cx, Empty, Go } from '../ui';
 
 const tools: { id: Page; name: string; icon: typeof AudioLines; tags: string[] }[] = [
+  { id: 'clipboard', name: '剪贴板历史', icon: toolIcons['clipboard'], tags: ['文字', '图片', '搜索', '复制', '历史'] },
   { id: 'ram', name: '内存清理', icon: toolIcons['ram'], tags: ['内存', '清理', 'RAM', '自动清理', '定时'] },
   { id: 'relay', name: '文件中转站', icon: toolIcons['relay'], tags: ['飞牛', 'WebDAV', '上传', '下载', '跨电脑', '缓存'] },
   { id: 'filesync', name: '文件同步', icon: toolIcons['filesync'], tags: ['FileSync', '双向同步', '备份', '文件夹', '笔记'] },
   { id: 'memory', name: '项目记忆', icon: toolIcons['memory'], tags: ['知识', '任务', '项目', 'SSH', 'WebDAV', '多设备'] },
   { id: 'media', name: '音视频工作台', icon: toolIcons['media'], tags: ['转写', '字幕', '翻译', '配音', '增强'] },
+  { id: 'netease', name: '网易云音乐', icon: toolIcons['netease'], tags: ['NCM', 'MP3', '转换', '喜欢的音乐', '歌单', '下载'] },
   { id: 'live', name: '实时助手', icon: toolIcons['live'], tags: ['会议', '问答', '录音', '实时'] },
   { id: 'captions', name: '实时字幕', icon: toolIcons['captions'], tags: ['直播', '视频', '翻译', '悬浮窗', '系统声音'] },
   { id: 'practice', name: '口语练习', icon: toolIcons['practice'], tags: ['英文', '朗读', '音标', '循环', '听力'] },

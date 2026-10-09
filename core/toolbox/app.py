@@ -140,6 +140,8 @@ class App:
             self.ledger_before_restore()
 
     def close(self):
+        if hasattr(self, "clipboard_history"):
+            self.clipboard_history.close()
         self.data_sync.close()
         if hasattr(self, "ledger_close"):
             self.ledger_close()
@@ -170,6 +172,8 @@ class App:
         self.providers.client.close()
 
     def prepare_exit(self):
+        if hasattr(self, "clipboard_history"):
+            self.clipboard_history.close()
         self.data_sync.close()
         if hasattr(self, "memory_cleaner_close"):
             self.memory_cleaner_close()

@@ -197,3 +197,12 @@ def test_aliyun_role_is_independent_and_preserves_existing_choices(service):
     assert after['roles']['translate'] == before['roles']['translate']
     assert after['roles']['quick_translate']['model'] == 'qwen3.8-flash'
     assert after['providers'] == before['providers']
+
+def test_clipboard_entry_can_be_pinned_and_removed(service):
+    app, menu = service
+    assert 'clipboard' in menu.settings()['tools']
+    saved = menu.save({'tools': ['clipboard', 'relay']})
+    assert saved['tools'] == ['clipboard', 'relay']
+    snap = menu.capture({})
+    assert snap['settings']['tools'] == ['clipboard', 'relay']
+    assert menu.save({'tools': ['relay']})['tools'] == ['relay']

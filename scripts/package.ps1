@@ -63,6 +63,8 @@ Copy-Item -LiteralPath $taskUv -Destination "$taskStage/tools/uv.exe" -Force
 if ($LASTEXITCODE -ne 0) { throw "准备 FN Connect 核心失败" }
 & $taskPython "$PSScriptRoot/prepare_adb.py"
 if ($LASTEXITCODE -ne 0) { throw '准备 ADB 运行环境失败' }
+& $taskPython "$PSScriptRoot/prepare_ncmdump.py"
+if ($LASTEXITCODE -ne 0) { throw '准备 NCM 转换运行环境失败' }
 Move-RetiredMemoryTool "$taskStage/tools"
 & "$PSScriptRoot/prepare_memory_cleaner.ps1"
 & "$PSScriptRoot/prepare_quick_context.ps1"
@@ -99,7 +101,7 @@ Copy-Item -LiteralPath "$taskRoot/docs/LEDGER.md" -Destination "$taskPortable/do
 Copy-Item -LiteralPath "$taskRoot/docs/WEBDAV.md" -Destination "$taskPortable/docs/WEBDAV.md" -Force
 Copy-Item -LiteralPath "$taskRoot/docs/FEISHU-BRIDGE.md" -Destination "$taskPortable/docs/FEISHU-BRIDGE.md" -Force
 Copy-Item -LiteralPath "$taskRoot/docs/QUICK-MENU.md" -Destination "$taskPortable/docs/QUICK-MENU.md" -Force
-foreach ($taskDoc in @('DATA-SYNC.md','CONFIG-BACKUP.md')) { Copy-Item -LiteralPath "$taskRoot/docs/$taskDoc" -Destination "$taskPortable/docs/$taskDoc" -Force }
+foreach ($taskDoc in @('DATA-SYNC.md','CONFIG-BACKUP.md','NETEASE.md')) { Copy-Item -LiteralPath "$taskRoot/docs/$taskDoc" -Destination "$taskPortable/docs/$taskDoc" -Force }
 if ($PortableOnly) {
     Write-Output "免安装版已更新：$taskPortable/WinToolbox.exe"
     Write-Output '设置、模型和记录保留在相邻 data 目录。'
@@ -110,25 +112,11 @@ if (-not $taskInstallerSource) { throw '没有找到当前版本安装包' }
 $taskInstaller = Join-Path $taskDist $taskInstallerSource.Name
 Copy-Item -LiteralPath $taskInstallerSource.FullName -Destination $taskInstaller -Force
 
-# GitHub Release must never include the user's adjacent portable data directory.
-$taskReleaseRoot = [IO.Path]::GetFullPath((Join-Path $taskRoot '.build/release'))
-$taskExpectedReleaseRoot = [IO.Path]::GetFullPath((Join-Path $taskRoot '.build')).TrimEnd('\') + '\'
-if (-not $taskReleaseRoot.StartsWith($taskExpectedReleaseRoot, [StringComparison]::OrdinalIgnoreCase)) { throw '发布暂存目录越界' }
-if (Test-Path -LiteralPath $taskReleaseRoot) { Remove-Item -LiteralPath $taskReleaseRoot -Recurse -Force }
-$taskReleasePortable = Join-Path $taskReleaseRoot 'WinToolbox-portable'
-New-Item -ItemType Directory -Path $taskReleasePortable -Force | Out-Null
-Copy-Item -LiteralPath "$taskRoot/desktop/src-tauri/target/release/wintoolbox.exe" -Destination "$taskReleasePortable/WinToolbox.exe" -Force
-foreach ($taskPart in @('python','core','tools')) { robocopy "$taskStage/$taskPart" "$taskReleasePortable/$taskPart" /E /NFL /NDL /NJH /NJS /NP | Out-Null; if ($LASTEXITCODE -gt 7) { throw "发布文件复制失败：$taskPart" } }
-Set-Content -LiteralPath "$taskReleasePortable/portable.flag" -Value 'WinToolbox portable data mode' -Encoding utf8
-Copy-Item -LiteralPath "$taskRoot/README.md" -Destination "$taskReleasePortable/使用说明.md" -Force
-New-Item -ItemType Directory -Path "$taskReleasePortable/docs" -Force | Out-Null
-foreach ($taskDoc in @('PROJECT-MEMORY.md','FILESYNC.md','FILE-RELAY.md','FLOATING-ORB.md','LEDGER.md','WEBDAV.md','DATA-SYNC.md','CONFIG-BACKUP.md','QUICK-MENU.md','PERFORMANCE.md','FEISHU-BRIDGE.md',"RELEASE-$taskVersion.md")) {
-    Copy-Item -LiteralPath "$taskRoot/docs/$taskDoc" -Destination "$taskReleasePortable/docs/$taskDoc" -Force
-}
-$taskPortableZip = Join-Path $taskDist "WinToolbox-$taskVersion-portable.zip"
-Compress-Archive -LiteralPath $taskReleasePortable -DestinationPath $taskPortableZip -Force
-@($taskInstaller,$taskPortableZip) | Get-FileHash -Algorithm SHA256 | ForEach-Object {
+# Public releases ship the installer only. The unpacked portable directory is
+# retained exclusively for local development and never enters release assets.
+$taskChecksums = @(Get-FileHash -LiteralPath $taskInstaller -Algorithm SHA256 | ForEach-Object {
     [PSCustomObject]@{ File = [IO.Path]::GetFileName($_.Path); Hash = $_.Hash }
-} | ConvertTo-Json | Set-Content -LiteralPath "$taskDist/SHA256SUMS.json" -Encoding utf8
+})
+ConvertTo-Json -InputObject $taskChecksums | Set-Content -LiteralPath "$taskDist/SHA256SUMS.json" -Encoding utf8
 Write-Output "打包完成：$taskDist"
 exit 0

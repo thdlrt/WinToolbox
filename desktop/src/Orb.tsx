@@ -249,6 +249,7 @@ export default function Orb() {
       onPointerMove={event => { const p = pointer.current; if (p && !p.moved && (event.buttons & 1) && Math.hypot(event.clientX - p.x, event.clientY - p.y) > 5) { p.moved = true; ignoreClick.current = true; userMoving.current = true; void getCurrentWebviewWindow().startDragging().catch(error => { userMoving.current = false; problem(error); }); } }}
       onPointerUp={() => { pointer.current = undefined; }}
       onClick={() => { if (ignoreClick.current) { ignoreClick.current = false; return; } if (working) { manualDetails.current = true; expand('job'); } else if (feedback === 'error') expand('result'); else expand(modeRef.current === 'menu' ? 'idle' : 'menu'); }}>
+      <span className="orb-rest-mark" aria-hidden="true"><svg width="16" height="16" viewBox="0 0 20 20"><rect x="4" y="4" width="4" height="4" rx="1.3"/><rect x="12" y="4" width="4" height="4" rx="1.3"/><rect x="4" y="12" width="4" height="4" rx="1.3"/><rect x="12" y="12" width="4" height="4" rx="1.3"/></svg></span>
       <svg className={`orb-ring ${working && !percent ? 'orb-indeterminate' : ''}`} viewBox="0 0 88 88" aria-hidden="true"><circle className="orb-track" cx="44" cy="44" r="38"/><circle className="orb-meter" cx="44" cy="44" r="38" strokeDasharray={`${238.76 * (working && !percent ? 20 : percent) / 100} 238.76`}/></svg>
       <span className="orb-reading" data-active={!working && !feedback}>{memory?.percent ?? '--'}<small>%</small></span>
       <span className="orb-core-symbol" data-active={!!feedback || working}>

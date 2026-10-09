@@ -10,6 +10,8 @@ WinToolbox uses the following third-party components. Their respective license t
 | Python | https://www.python.org/psf/license/ |
 | uv | https://github.com/astral-sh/uv (MIT / Apache-2.0) |
 | FFmpeg | https://ffmpeg.org/legal.html ; builds may include GPL components, check bundled binary `-L` and `-buildconf` output |
+| ncmdump 1.5.1 | https://github.com/taurusxin/ncmdump/tree/1.5.1 (MIT; unmodified Windows converter, full LICENSE.txt and SOURCE.json in tools/ncmdump) |
+| python-qrcode | https://github.com/lincolnloop/python-qrcode (BSD-3-Clause; local NetEase login QR generation) |
 | LibreOffice | https://www.libreoffice.org/about-us/licenses/ (MPL-2.0; optional runtime) |
 | faster-whisper | https://github.com/SYSTRAN/faster-whisper (MIT; optional runtime) |
 | Qwen3-ASR | https://github.com/QwenLM/Qwen3-ASR (Apache-2.0; optional model) |
@@ -23,6 +25,8 @@ WinToolbox uses the following third-party components. Their respective license t
 | Android Debug Bridge | https://developer.android.com/tools/releases/platform-tools ; official Platform-Tools 37.0.1 runtime, upstream notices retained in tools/adb/NOTICE.txt |
 
 Model artifacts are obtained only from the corresponding upstream sources when the user installs them. Model installers record revisions and validate available upstream integrity hashes. The release bundle includes FFmpeg build and license metadata in `tools`.
+
+The ncmdump Windows release ZIP is pinned to SHA-256 `bb849221c06b8fdbff42aefb86baea9c07256568658d80f4be72a39a2a1632dc` by scripts/prepare_ncmdump.py. NCM decoding and embedded metadata writing are performed by that unmodified executable. FFmpeg handles optional FLAC-to-MP3 conversion. NetEase request encoding interoperates with the protocol documented by https://github.com/NeteaseCloudMusicApiEnhanced/api-enhanced/blob/main/util/crypto.js ; account requests go directly to music.163.com. No third-party API server receives credentials.
 
 The Windows ADB runtime is staged by scripts/prepare_adb.py from the pinned official platform-tools_r37.0.1-win.zip archive. tools/adb/SOURCE.json records its URL, SHA-256 and extracted file hashes. Only ADB and its runtime DLLs/notices are included; Shizuku itself must be installed on the user's phone. Host ADB pairing credentials use the Android tools' normal local storage and are not included in WinToolbox backup/WebDAV snapshots.
 

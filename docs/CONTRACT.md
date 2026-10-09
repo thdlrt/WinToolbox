@@ -112,16 +112,24 @@ Cleanup previews recursively enumerate files only; strong ETags and timestamps a
 
 ## 快捷菜单
 
+占用动作 `quick.run {id,action:'file_locks'}` 返回后台任务，支持文件、文件夹及混合选择（最多 100 个选中项）；文件夹递归最多扫描 5000 个项目，不跟随符号链接/联接。`quick.snapshot.file_locks` 返回 processes（PID、启动时间、完整路径、是否允许操作）、files（选中项及问题子项，最多 200 条；status 为 available/blocked/denied/missing/error/incomplete）、scanned_count、issue_count、partial、warnings。文件通过 Restart Manager 查询，目录句柄及当前工作目录通过 Native API FileProcessIdsUsingFileInformation 补充；未完成枚举、上限或不支持文件系统显式报告 partial。目录状态汇总子项阻塞。`quick.release {id,process:'pid:start',mode:'close'|'terminate',confirm:true}` 返回后台任务，仅操作此前列出的单个进程；执行时重新查询占用，以持有的进程句柄核对启动时间和关键进程状态，完成后重新扫描。系统、服务、Explorer 和工具箱自身只读；目录占用进程额外核对服务列表、当前会话。`quick.lock_menu {enabled?,initialize?}` 管理 HKCU 文件和 Directory 右键菜单，关闭偏好持久化；已有仅文件菜单在启动时补注册目录入口。原生 `--file-locks <absolute paths...>` 冷启动和单实例均打开快捷菜单并自动检查。不会删除文件、自动提权或关闭远程句柄。
+
 `quick.settings` / `quick.save` 读取和验证 `quick-menu.json`；桌面通过原生命令 `quick_settings {settings?}` 同步注册快捷键与保存，失败恢复原生配置。`quick.actions` 返回内置/自定义动作及触发条件。`quick.capture {text?,paths?,protected?,message?}` 建立最多 32 个、10 分钟有效的内存上下文；`quick.snapshot {id}` 返回选区、推荐动作、固定入口和临时结果。
 
 `quick.translate {id}` 与 `quick.run {id,action,token?}` 返回后台 Job；持久化参数仅含上下文 ID、动作及令牌。选区和翻译结果通过 snapshot 获取，不进入历史结果。`quick.preview {id}` 返回文件夹解散计划和校验令牌；执行再次核对文件状态，拒绝目标冲突、嵌套根、目录链接，不覆盖文件，仅删除空目录，出错尝试回滚并保留审计记录。
 
 翻译独立角色为 `quick_translate`，新配置默认阿里云 `qwen3.8-flash`，缺失角色时复用现有 dashscope 提供商；不覆盖已有功能分配。原生 `quick_snapshot`、`quick_hide`、`quick_copy {text}` 管理瞬态窗口及显式复制。选区由短生命周期 STA helper 获取，不模拟复制；窗口隐藏约 30 秒后销毁。自定义脚本上下文临时文件在 finally 中删除，输出最多读取 16000 字节，60 秒超时。使用与测试见 `docs/QUICK-MENU.md`。
 
-Feishu p2p routing: non-replies use the rule target; replies follow verified same-chat message ancestry and persistent `message_contexts` (app/chat/message → local Codex thread). Unknown sources may be recovered from unique successful bot-send execution receipts in local Codex history. Unknown/ambiguous replies fail without default fallback. Groups retain fixed targets. Existing jobs gain a nullable `target_thread_id`; no historical target is guessed from mutable rule settings.
+Feishu p2p/group routing: ordinary new messages use the rule target, subject to the pending group-question exception below; replies follow verified same-chat message ancestry and persistent `message_contexts` (app/chat/message → local Codex thread). Unknown sources may be recovered from unique successful bot-send execution receipts in local Codex history. An uncached group bot question uses its own send receipt before any older discussion mapping. Unknown/ambiguous bot replies fail without default fallback. Group replies to bot/context messages can omit a repeated mention; unrelated unmentioned human replies are ignored before acknowledgement. Group rule authorization still applies in the destination chat. Existing jobs gain a nullable `target_thread_id`; no historical target is guessed from mutable rule settings.
+
+Unthreaded group bot mentions first check verified `pending_questions` in the rule's `pending_question_hours` window (default 168; 0 disables). Questions addressed to the current sender take priority, then general questions, then other waiting questions. A unique source chat wins; multiple source chats require an explicit Feishu reply and yield `needs_context` without dispatch or thinking acknowledgement. No waiting question preserves the default. Explicit reply ancestry always wins. State remains open until a subsequent bot answer; persisted answer IDs support completion recovery after restart. History paging is bounded at 1000 messages; incomplete history must not claim no waiting questions.
 
 ## 静默自启与悬浮球闲置保护
 
 Run/WinToolbox 写入当前可执行文件加 `--silent`。`general.startup.migrate` 仅将当前安装已启用的无参数旧命令升级，不启用关闭的自启、不改写其它安装、不修改 Windows StartupApproved 状态。主窗口创建为隐藏，手动启动才显示；重复静默启动不唤醒主窗口。静默启动显示悬浮球并保留托盘，左键托盘和常规二次启动可打开主窗口。
 
-悬浮球前端 OrbProtection 使用 20 秒暗色细环、每分钟 49 点微移和 5 分钟自动隐去，偏移不超过 12 logical px，不保存到 orb-position。`orb.settings.get/save` 增加 `oled_auto_hide`，缺失默认 true，旧客户端只保存 actions 时保留已有开关。隐去后停止读数轮询与移位计时器，保留原生唤醒区域；移入、拖入和 orb-reset 恢复。静止光标不阻止淡化，光标位于区域内时不移动点击目标。快捷菜单选区新增 same_language，目标语言本地判断在 capture/snapshot/translate 与执行时检查，不额外调用 API 检测语言。
+悬浮球前端 OrbProtection 使用 20 秒低亮度圆形工具钮、每分钟 49 点微移和 5 分钟自动隐去，偏移不超过 12 logical px，不保存到 orb-position。`orb.settings.get/save` 增加 `oled_auto_hide`，缺失默认 true，旧客户端只保存 actions 时保留已有开关。隐去后停止读数轮询与移位计时器，保留原生唤醒区域；移入、拖入和 orb-reset 恢复。静止光标不阻止淡化，光标位于区域内时不移动点击目标。快捷菜单选区新增 same_language，目标语言本地判断在 capture/snapshot/translate 与执行时检查，不额外调用 API 检测语言。
+
+## 剪贴板历史
+`clipboard.settings {days?:1..365,enabled?:bool}` 读取/修改本机配置，默认启用、保留 3 天。`clipboard.list {kind?:all|text|image,query?,offset?}` 返回最多 50 条摘要、more 和 config；文字按 Unicode casefold 子串搜索。`get {id}` 返回完整文字或 PNG base64；`copy {id}` 写回系统剪贴板；`delete {id}` 删除单条；`clear {confirm:true}` 清空。重复内容按内容哈希合并并刷新复制时间。
+数据存放于 `data/clipboard-local/history.sqlite3`（schema v1），不纳入备份、WebDAV、任务或事件载荷。后台每 500ms 检查 Windows 序列号，变化时才读内容；每分钟、读取和设置时清理过期数据。支持 Unicode 文字、PNG/DIB/DIBV5 图片，跳过排除监控标记。单项上限 32 MiB、图片 2500 万像素；读取失败显示错误并自动重试。启动/恢复记录时从下一次剪贴板变化开始；退出工具箱停止记录。图片不做 OCR，搜索仅匹配文字。

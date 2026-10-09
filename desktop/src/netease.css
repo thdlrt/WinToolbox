@@ -1,0 +1,11 @@
+.netease-page { display: grid; gap: 18px; }
+.netease-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-bottom: 12px; }
+.netease-path { display: flex; gap: 8px; }
+.netease-path input { flex: 1; min-width: 0; }
+.netease-qr { display: flex; align-items: center; gap: 18px; margin: 14px 0; }
+.netease-qr img { width: 190px; height: 190px; background: white; padding: 8px; }
+.netease-table { max-height: 440px; overflow: auto; margin-top: 12px; }
+.netease-table table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.netease-table th, .netease-table td { text-align: left; padding: 9px; border-bottom: 1px solid var(--border); }
+.netease-table th { position: sticky; top: 0; background: var(--surface); }
+.netease-table input[type=checkbox] { width: 16px; }

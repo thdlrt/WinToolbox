@@ -2,6 +2,10 @@
 
 
 def register_all(app):
+    from . import clipboard_history
+    clipboard_history.register(app)
+    from . import netease
+    netease.register(app)
     from . import quick_menu
     quick_menu.register(app)
     from . import orb_settings

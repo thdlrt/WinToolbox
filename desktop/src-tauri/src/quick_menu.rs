@@ -122,6 +122,14 @@ fn trigger(app:&AppHandle,source:isize,x:i32,y:i32,generation:u64) {
         // The selection reader never focuses a window. Capture finishes before popup creation.
         if !capture.is_object(){capture=json!({})}
         let snapshot=super::rpc_blocking(app,&app.state::<super::Bridge>(),"quick.capture".into(),capture)?;
+        show_snapshot(app,snapshot,x,y)
+    })();
+    if let Err(error)=result {*state.error.lock().unwrap()=Some(error.clone());let _=app.emit("backend-event",json!({"type":"quick.error","message":error}));}
+    state.busy.store(false,Ordering::SeqCst);
+}
+
+fn show_snapshot(app:&AppHandle,snapshot:Value,x:i32,y:i32)->Result<(),String>{
+        let state=app.state::<QuickState>();
         *state.snapshot.lock().unwrap()=snapshot.clone();
         let window=if let Some(w)=app.get_webview_window("quick"){w}else{
             let w=WebviewWindowBuilder::new(app,"quick",WebviewUrl::App("index.html?quick=1".into()))
@@ -149,9 +157,26 @@ fn trigger(app:&AppHandle,source:isize,x:i32,y:i32,generation:u64) {
         window.show().map_err(|e|e.to_string())?;let _=window.set_focus();
         let _=window.emit("quick-context",snapshot);
         Ok(())
-    })();
-    if let Err(error)=result {*state.error.lock().unwrap()=Some(error.clone());let _=app.emit("backend-event",json!({"type":"quick.error","message":error}));}
-    state.busy.store(false,Ordering::SeqCst);
+}
+
+pub fn file_locks_launch(app:&AppHandle,args:&[String])->bool {
+    if args.get(1).map(String::as_str)!=Some("--file-locks"){return false}
+    let paths:Vec<String>=args.iter().skip(2).filter(|p|std::path::Path::new(p).is_absolute()).take(100).cloned().collect();
+    let handle=app.clone();
+    std::thread::spawn(move||{
+        let result=(||->Result<(),String>{
+            let mut snapshot=super::rpc_blocking(&handle,&handle.state::<super::Bridge>(),"quick.capture".into(),json!({"paths":paths}))?;
+            match super::rpc_blocking(&handle,&handle.state::<super::Bridge>(),"quick.run".into(),json!({"id":snapshot["id"],"action":"file_locks"})) {
+                Ok(job)=>snapshot["initial_job"]=job,
+                Err(error)=>snapshot["message"]=json!(error),
+            }
+            #[cfg(windows)] let (x,y)=unsafe{let mut p=win::Point::default();win::GetCursorPos(&mut p);(p.x,p.y)};
+            #[cfg(not(windows))] let (x,y)=(50,50);
+            show_snapshot(&handle,snapshot,x,y)
+        })();
+        if let Err(error)=result {eprintln!("文件占用菜单打开失败: {error}");let _=super::orb::open(&handle,"quick-settings");let _=handle.emit("backend-event",json!({"type":"quick.error","message":error}));}
+    });
+    true
 }
 
 fn position(x:i32,y:i32,w:u32,h:u32,left:i32,top:i32,width:u32,height:u32)->(i32,i32){
