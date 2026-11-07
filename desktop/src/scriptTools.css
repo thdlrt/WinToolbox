@@ -1,0 +1,15 @@
+.script-section{padding:0}
+.script-row{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:14px;align-items:center;padding:15px 17px}
+.script-run{width:38px;min-height:38px;padding:0;flex:0 0 38px}
+.script-body{display:flex;flex-direction:column;gap:4px;min-width:0}
+.script-body strong{font-size:13px;font-weight:600}
+.script-body p{font-size:12px;color:var(--muted);line-height:1.7}
+.script-path{font-size:12px;color:var(--muted);overflow-wrap:anywhere}
+.script-update{font-size:12px;color:var(--accent)}
+.script-actions{display:flex;align-items:center;gap:2px}
+.terminal{border-top:1px solid var(--border);background:var(--surface-subtle);border-radius:0 0 10px 10px}
+.terminal-head{display:flex;align-items:center;gap:9px;padding:10px 15px;border-bottom:1px solid var(--border);color:var(--muted)}
+.terminal-head code{font-size:12px;color:var(--text);overflow-wrap:anywhere}
+.terminal-head time{font-size:12px}
+.terminal-body{margin:0;padding:13px 15px;max-height:320px;overflow:auto;font-size:12px;line-height:1.6}
+.terminal-error{margin:0;padding:0 15px 13px;font-size:12px;color:var(--danger);white-space:pre-wrap;overflow-wrap:anywhere}

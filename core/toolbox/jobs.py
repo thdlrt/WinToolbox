@@ -49,10 +49,12 @@ class Job:
         self.manager.storage.put("jobs", self.id, self.record)
         self.manager.app.emit("job.updated", job=copy.deepcopy(self.record))
 
-    def progress(self, percent, message):
+    def progress(self, percent, message, *, transfer=None):
         self.check_cancelled()
         with self.lock:
             self.record.update(progress=max(0, min(100, float(percent))), message=str(message))
+            if transfer is not None:
+                self.record['transfer'] = copy.deepcopy(transfer)
             self.save()
 
     def check_cancelled(self):
@@ -97,10 +99,14 @@ class Job:
         self.manager.storage.put("checkpoints", key, {"result": result, "files": files})
         return result
 
-    def run_process(self, args, *, cwd=None, env=None, timeout=None, max_output_bytes=None):
-        """Hide Windows child consoles, retain diagnostics, cancel entire process tree."""
+    def run_process(self, args, *, cwd=None, env=None, timeout=None, max_output_bytes=None, log_name=None):
+        """Hide Windows child consoles, retain diagnostics, cancel entire process tree.
+
+        A caller that must read the output while the child still runs passes a
+        stable `log_name`; the default keeps one uniquely named log per call.
+        """
         flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-        log_path = self.work_dir / ("process-" + uuid.uuid4().hex[:8] + ".log")
+        log_path = self.work_dir / (log_name or ("process-" + uuid.uuid4().hex[:8] + ".log"))
         started = time.monotonic()
         with log_path.open("wb") as log:
             process = subprocess.Popen([str(a) for a in args], cwd=cwd, env=env, stdin=subprocess.DEVNULL,
@@ -155,14 +161,16 @@ class Jobs:
             self.gpu_lock.release()
 
     def submit(self, tool, params, runner=None):
+        if tool.startswith('ai_calls.'):
+            allowed = {'ai_calls.run': {'request_id'}, 'ai_calls.models': {'account_id'}}
+            if tool not in allowed or set(params) != allowed[tool] or any(not isinstance(v, str) for v in params.values()):
+                raise ValueError('模型调用请使用 ai_calls.submit，凭据及原始请求不得写入后台任务参数')
         if tool.startswith('ai.config.') and (set(params) != {'request_token'} or not isinstance(params.get('request_token'), str)):
             raise ValueError('AI 配置同步请使用专用接口，密钥和连接参数不得写入任务记录')
         if tool.startswith('relay.') and any(key in params for key in ('password', 'password_dpapi', 'username', 'url', 'authorization')):
             raise ValueError('中转站凭据只能通过 relay.save 保存，不得写入任务记录')
         if tool.startswith("fnconnect.") and any(k in params for k in ("password", "cookie", "secret", "authorization")):
             raise ValueError("飞牛凭据只能通过专用连接接口提交，不得写入任务记录")
-        if tool == "shizuku.pair" and any(key in params for key in ("code", "pairing_code", "password")):
-            raise ValueError("无线配对请通过 shizuku.pair 专用接口提交，配对码不得写入任务记录")
         if tool in ("webdav.upload", "webdav.restore") and any(
             key in params for key in ("password", "backup_password", "username", "url", "authorization", "remote_path")
         ):

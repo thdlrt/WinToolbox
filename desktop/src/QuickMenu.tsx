@@ -8,31 +8,48 @@ import { Button, Notice } from './ui';
 import { quickActionIcon } from './quickIcons';
 import { toolIcons } from './toolIcons';
 import { observeQuickJob } from './quickJob';
+import { nextQuickTranslation, type QuickTranslationSource } from './quickTranslation';
 import './quickMenu.css';
 
 export function QuickActions({ snapshot, onChange }: {snapshot:QuickSnapshot;onChange:(value:QuickSnapshot)=>void}) {
   const [failure,setFailure]=useState(''), [job,setJob]=useState<Job>(), [busy,setBusy]=useState(false), [plan,setPlan]=useState<DissolvePlan>(), [copied,setCopied]=useState(false);
   const [releasePlan,setReleasePlan]=useState<{process:FileLockProcess;mode:'close'|'terminate'}>();
   const current=useRef(snapshot.id);current.current=snapshot.id;
-  const translate=async()=>{
+  const attempted=useRef(new Set<string>());
+  const translate=async(source:QuickTranslationSource='selection')=>{
+    attempted.current.add(`${source}:${source==='clipboard'?snapshot.clipboard_text||'':snapshot.text}`);
     setFailure('');setBusy(true);
-    try { const value=await rpc<Job>('quick.translate',{id:snapshot.id});if(current.current===snapshot.id)setJob(value); }
-    catch(e){if(current.current===snapshot.id)setFailure(errorText(e));}finally{setBusy(false);}
+    try { const value=await rpc<Job>('quick.translate',{id:snapshot.id,source});if(current.current===snapshot.id)setJob(value); }
+    catch(e){if(current.current===snapshot.id)setFailure(errorText(e));}finally{if(current.current===snapshot.id)setBusy(false);}
   };
-  useEffect(()=>{setFailure('');setJob(snapshot.initial_job);setPlan(undefined);setReleasePlan(undefined);setCopied(false);if(snapshot.foreign&&snapshot.settings.auto_translate&&!snapshot.translation)void translate();},[snapshot.id]);
+  useEffect(()=>{attempted.current.clear();setFailure('');setJob(snapshot.initial_job);setPlan(undefined);setReleasePlan(undefined);setCopied(false);},[snapshot.id]);
+  useEffect(()=>{
+    if(busy||job)return;
+    const next=nextQuickTranslation(snapshot,attempted.current);
+    if(next){attempted.current.add(next.key);void translate(next.source);}
+  },[snapshot.id,snapshot.text,snapshot.foreign,snapshot.translation,snapshot.clipboard_text,snapshot.clipboard_foreign,snapshot.clipboard_translation,snapshot.settings.auto_translate,snapshot.initial_job,busy,job]);
   useEffect(()=>{
     if(!job)return;
-    return observeQuickJob(()=>rpc<Job>('jobs.get',{id:job.id}),()=>quickSnapshot(snapshot.id),next=>{onChange(next);setJob(undefined);},e=>{setFailure(errorText(e));setJob(undefined);});
+    const receive=(next:QuickSnapshot)=>{
+      if(job.tool==='quick.translate'&&job.params.source==='clipboard')attempted.current.add(`clipboard:${next.clipboard_text||''}`);
+      onChange(next);
+    };
+    return observeQuickJob(()=>rpc<Job>('jobs.get',{id:job.id}),()=>quickSnapshot(snapshot.id),next=>{receive(next);setJob(undefined);},e=>{
+      void quickSnapshot(snapshot.id).then(next=>{if(current.current===snapshot.id)receive(next);}).catch(()=>{}).finally(()=>{if(current.current===snapshot.id){setFailure(errorText(e));setJob(undefined);}});
+    });
   },[job?.id,snapshot.id]);
   const run=async(action:string,token?:string)=>{
     setFailure('');setBusy(true);setCopied(false);setReleasePlan(undefined);
     try {if(action==='dissolve'&&!token){setPlan(await rpc<DissolvePlan>('quick.preview',{id:snapshot.id}));return;}
       const value=await startQuickAction(snapshot.id,action,token);if(current.current===snapshot.id){setPlan(undefined);setJob(value);}
-    }catch(e){setFailure(errorText(e));}finally{setBusy(false);}
+    }catch(e){
+      if(action==='clipboard_translate')try{const next=await quickSnapshot(snapshot.id);if(current.current===snapshot.id)onChange(next);}catch{}
+      if(current.current===snapshot.id)setFailure(errorText(e));
+    }finally{if(current.current===snapshot.id)setBusy(false);}
   };
   const copy=async(text:string)=>{try{await copyQuickText(text);setCopied(true);}catch(e){setFailure(errorText(e));}};
   const release=async()=>{if(!releasePlan)return;setBusy(true);setFailure('');try{const value=await rpc<Job>('quick.release',{id:snapshot.id,process:releasePlan.process.key,mode:releasePlan.mode,confirm:true});setJob(value);setReleasePlan(undefined);}catch(e){setFailure(errorText(e));}finally{setBusy(false);}};
-  const working=busy||!!job;
+  const working=busy||!!job||!!snapshot.capture_pending;
   return <>
     {snapshot.message&&<Notice>{snapshot.message}</Notice>}
     {snapshot.translation&&<section className="quick-translation" aria-label="选区翻译">
@@ -40,7 +57,13 @@ export function QuickActions({ snapshot, onChange }: {snapshot:QuickSnapshot;onC
       <p>{snapshot.translation.translation}</p>{snapshot.translation.meanings.map((text,i)=><p key={i}>{text}</p>)}
       <button className="quick-copy" aria-label="复制译文" onClick={()=>void copy(snapshot.translation!.translation)}><Copy size={14}/>{copied?'已复制':'复制'}</button>
     </section>}
-    {working&&<div className="quick-working" role="status"><LoaderCircle size={16} className="spin"/>{job?.tool==='quick.translate'?'正在翻译…':'正在处理…'}</div>}
+    {snapshot.clipboard_translation&&!(snapshot.translation&&snapshot.text===snapshot.clipboard_text&&snapshot.translation.translation===snapshot.clipboard_translation.translation)&&<section className="quick-translation" aria-label="剪贴板翻译">
+      <p className="muted">剪贴板翻译</p>
+      {snapshot.clipboard_translation.phonetic&&<p className="quick-phonetic">{snapshot.clipboard_text} <span>{snapshot.clipboard_translation.phonetic}</span></p>}
+      <p>{snapshot.clipboard_translation.translation}</p>{snapshot.clipboard_translation.meanings.map((text,i)=><p key={i}>{text}</p>)}
+      <button className="quick-copy" aria-label="复制剪贴板译文" onClick={()=>void copy(snapshot.clipboard_translation!.translation)}><Copy size={14}/>{copied?'已复制':'复制'}</button>
+    </section>}
+    {working&&<div className="quick-working" role="status"><LoaderCircle size={16} className="spin"/>{snapshot.capture_pending?'正在读取选区…':job?.tool==='quick.translate'?'正在翻译…':job?.params.action==='clipboard_ocr'?'正在识别剪贴板图片…':'正在处理…'}</div>}
     {failure&&<Notice tone="warning">{failure}</Notice>}
     {snapshot.file_locks&&<section className="quick-locks" aria-label="文件占用">
       {snapshot.file_locks.scanned_count!==undefined&&<p>已检查 {snapshot.file_locks.scanned_count} 个文件和文件夹{snapshot.file_locks.partial?'（扫描不完整）':''}</p>}
@@ -54,7 +77,7 @@ export function QuickActions({ snapshot, onChange }: {snapshot:QuickSnapshot;onC
       <p className="muted">{snapshot.file_locks.notice}</p><Button disabled={working} onClick={()=>void run('file_locks')}>重新检查</Button>
     </section>}
     {releasePlan&&<section className="quick-confirm"><strong>{releasePlan.mode==='terminate'?'强制结束':'请求关闭'} {releasePlan.process.name}（PID {releasePlan.process.pid}）</strong><p>{releasePlan.mode==='terminate'?'将结束整个进程，其它文件也会关闭，未保存内容可能丢失。':'将向此程序发送关闭请求；请先保存正在编辑的内容。'}文件不会自动删除。</p><div className="button-row"><Button disabled={working} onClick={()=>setReleasePlan(undefined)}>取消</Button><Button variant="primary" disabled={working} onClick={()=>void release()}>确认{releasePlan.mode==='terminate'?'结束进程':'请求关闭'}</Button></div></section>}
-    {snapshot.output&&<section className="quick-output"><pre>{snapshot.output}</pre><Button onClick={()=>void copy(snapshot.output)}><Copy size={14}/>{copied?'已复制':'复制结果'}</Button></section>}
+    {snapshot.output&&<section className="quick-output">{snapshot.output_notice&&<p role="status">{snapshot.output_notice}</p>}<pre>{snapshot.output}</pre><Button onClick={()=>void copy(snapshot.output)}><Copy size={14}/>{copied?'已复制':'复制结果'}</Button></section>}
     {plan&&<section className="quick-confirm"><strong>解散 {plan.roots.length} 个文件夹</strong><p>将 {plan.operations.length} 个直接子项移至各自上一级，然后移除空文件夹。</p>
       <div className="quick-plan">{plan.operations.map((op,i)=><div key={i}>{op.source}<br/>→ {op.target}</div>)}{!plan.operations.length&&plan.roots.map(root=><div key={root}>{root}（空）</div>)}</div>
       <div className="button-row"><Button onClick={()=>setPlan(undefined)}>取消</Button><Button variant="primary" disabled={working} onClick={()=>void run('dissolve',plan.token)}>确认解散</Button></div>

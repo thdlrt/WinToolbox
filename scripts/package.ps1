@@ -32,6 +32,18 @@ function Move-ObsoletePackageMetadata([string]$taskSitePackages) {
         Move-Item -LiteralPath $taskSource -Destination $taskBackup
     }
 }
+function Move-RetiredShizuku([string]$taskBundle) {
+    $taskWorkspace = [IO.Path]::GetFullPath($taskRoot).TrimEnd('\') + '\'
+    foreach ($taskRelative in @('core/toolbox/features/shizuku.py', 'core/toolbox/features/__pycache__/shizuku.*.pyc', 'tools/adb')) {
+        foreach ($taskItem in (Get-Item -Path (Join-Path $taskBundle $taskRelative) -ErrorAction SilentlyContinue)) {
+            $taskSource = [IO.Path]::GetFullPath($taskItem.FullName)
+            $taskBackup = [IO.Path]::GetFullPath((Join-Path $taskRoot ('.build/retired-components/shizuku-' + [Guid]::NewGuid().ToString('N'))))
+            if (-not $taskSource.StartsWith($taskWorkspace, [StringComparison]::OrdinalIgnoreCase) -or -not $taskBackup.StartsWith($taskWorkspace, [StringComparison]::OrdinalIgnoreCase)) { throw 'Unexpected retired component path' }
+            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $taskBackup) | Out-Null
+            Move-Item -LiteralPath $taskSource -Destination $taskBackup -ErrorAction Stop
+        }
+    }
+}
 $taskPython = Join-Path $taskRoot 'core/.venv/Scripts/python.exe'
 if (-not (Test-Path $taskPython)) { throw '请先运行 scripts/dev.ps1 -BackendOnly 安装环境' }
 if (-not $SkipInstall) { uv pip install --python $taskPython -e "$taskRoot/core"; if ($LASTEXITCODE -ne 0) { throw '后端依赖安装失败' } }
@@ -61,13 +73,16 @@ $taskUv = (Get-Command uv.exe).Source
 Copy-Item -LiteralPath $taskUv -Destination "$taskStage/tools/uv.exe" -Force
 & $taskPython "$PSScriptRoot/prepare_fnconnect.py"
 if ($LASTEXITCODE -ne 0) { throw "准备 FN Connect 核心失败" }
-& $taskPython "$PSScriptRoot/prepare_adb.py"
-if ($LASTEXITCODE -ne 0) { throw '准备 ADB 运行环境失败' }
+& $taskPython "$PSScriptRoot/prepare_netmount.py"
+if ($LASTEXITCODE -ne 0) { throw '准备硬盘挂载引擎失败' }
+Move-RetiredShizuku $taskStage
 & $taskPython "$PSScriptRoot/prepare_ncmdump.py"
 if ($LASTEXITCODE -ne 0) { throw '准备 NCM 转换运行环境失败' }
 Move-RetiredMemoryTool "$taskStage/tools"
 & "$PSScriptRoot/prepare_memory_cleaner.ps1"
 & "$PSScriptRoot/prepare_quick_context.ps1"
+& "$PSScriptRoot/prepare_bambu_cloud.ps1" -OutputDirectory "$taskStage/tools/bambu-cloud"
+& "$PSScriptRoot/prepare_qqbot.ps1" -OutputDirectory "$taskStage/tools/qqbot-runtime"
 Copy-Item -LiteralPath "$taskRoot/docs/THIRD_PARTY.md" -Destination "$taskStage/tools/THIRD_PARTY.md" -Force
 & $taskPython -c 'import pathlib,subprocess,sys; r=subprocess.run([sys.argv[1],sys.argv[2]],stdout=subprocess.PIPE,stderr=subprocess.STDOUT,check=True); pathlib.Path(sys.argv[3]).write_bytes(r.stdout)' $taskFFmpeg '-L' "$taskStage/tools/ffmpeg-license.txt"
 if ($LASTEXITCODE -ne 0) { throw '保存 FFmpeg 许可信息失败' }
@@ -87,11 +102,28 @@ $taskDist = Join-Path $taskRoot 'dist'
 $taskPortable = Join-Path $taskDist 'WinToolbox-portable'
 New-Item -ItemType Directory -Path $taskPortable -Force | Out-Null
 Copy-Item -LiteralPath "$taskRoot/desktop/src-tauri/target/release/wintoolbox.exe" -Destination "$taskPortable/WinToolbox.exe" -Force
-foreach ($taskPart in @('python','core','tools')) { robocopy "$taskStage/$taskPart" "$taskPortable/$taskPart" /E /NFL /NDL /NJH /NJS /NP | Out-Null; if ($LASTEXITCODE -gt 7) { throw "便携文件复制失败：$taskPart" } }
+foreach ($taskPart in @('python','core','tools')) {
+    $taskCopyOptions = @('/E','/NFL','/NDL','/NJH','/NJS','/NP','/R:0','/W:0')
+    # Mounted drives keep rclone running after the toolbox window exits. Leave
+    # an identical binary alone; a changed binary must fail instead of waiting
+    # indefinitely or interrupting the owner's mounts.
+    if ($taskPart -eq 'tools') {
+        $taskRcloneSource = Join-Path $taskStage 'tools/netmount/rclone.exe'
+        $taskRcloneTarget = Join-Path $taskPortable 'tools/netmount/rclone.exe'
+        if ((Test-Path -LiteralPath $taskRcloneSource) -and (Test-Path -LiteralPath $taskRcloneTarget) -and
+            (Get-FileHash -LiteralPath $taskRcloneSource).Hash -eq (Get-FileHash -LiteralPath $taskRcloneTarget).Hash) {
+            $taskCopyOptions += @('/XF','rclone.exe')
+        }
+    }
+    robocopy "$taskStage/$taskPart" "$taskPortable/$taskPart" @taskCopyOptions | Out-Null
+    if ($LASTEXITCODE -lt 0 -or $LASTEXITCODE -gt 7) { throw "便携文件复制失败：$taskPart" }
+}
+Move-RetiredShizuku $taskPortable
 Move-RetiredMemoryTool "$taskPortable/tools" -AllowBusy
 Move-ObsoletePackageMetadata "$taskPortable/python/Lib/site-packages"
 Set-Content -LiteralPath "$taskPortable/portable.flag" -Value 'WinToolbox portable data mode' -Encoding utf8
 Copy-Item -LiteralPath "$taskRoot/README.md" -Destination "$taskPortable/使用说明.md" -Force
+Copy-Item -LiteralPath "$PSScriptRoot/wintoolbox.cmd" -Destination "$taskPortable/wintoolbox.cmd" -Force
 New-Item -ItemType Directory -Path "$taskPortable/docs" -Force | Out-Null
 Copy-Item -LiteralPath "$taskRoot/docs/PROJECT-MEMORY.md" -Destination "$taskPortable/docs/PROJECT-MEMORY.md" -Force
 Copy-Item -LiteralPath "$taskRoot/docs/FILESYNC.md" -Destination "$taskPortable/docs/FILESYNC.md" -Force
@@ -100,8 +132,9 @@ Copy-Item -LiteralPath "$taskRoot/docs/FLOATING-ORB.md" -Destination "$taskPorta
 Copy-Item -LiteralPath "$taskRoot/docs/LEDGER.md" -Destination "$taskPortable/docs/LEDGER.md" -Force
 Copy-Item -LiteralPath "$taskRoot/docs/WEBDAV.md" -Destination "$taskPortable/docs/WEBDAV.md" -Force
 Copy-Item -LiteralPath "$taskRoot/docs/FEISHU-BRIDGE.md" -Destination "$taskPortable/docs/FEISHU-BRIDGE.md" -Force
+Copy-Item -LiteralPath "$taskRoot/docs/QQ-BRIDGE.md" -Destination "$taskPortable/docs/QQ-BRIDGE.md" -Force
 Copy-Item -LiteralPath "$taskRoot/docs/QUICK-MENU.md" -Destination "$taskPortable/docs/QUICK-MENU.md" -Force
-foreach ($taskDoc in @('DATA-SYNC.md','CONFIG-BACKUP.md','NETEASE.md')) { Copy-Item -LiteralPath "$taskRoot/docs/$taskDoc" -Destination "$taskPortable/docs/$taskDoc" -Force }
+foreach ($taskDoc in @('DATA-SYNC.md','CONFIG-BACKUP.md','NETEASE.md','STACKCHAN.md','AI-QUOTA.md','CLI.md')) { Copy-Item -LiteralPath "$taskRoot/docs/$taskDoc" -Destination "$taskPortable/docs/$taskDoc" -Force }
 if ($PortableOnly) {
     Write-Output "免安装版已更新：$taskPortable/WinToolbox.exe"
     Write-Output '设置、模型和记录保留在相邻 data 目录。'

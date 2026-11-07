@@ -6,6 +6,7 @@ import { toolIcons } from '../toolIcons';
 import { cx, Empty, Go } from '../ui';
 
 const tools: { id: Page; name: string; icon: typeof AudioLines; tags: string[] }[] = [
+  { id: 'ai-quota', name: 'AI 聚合', icon: toolIcons['ai-quota'], tags: ['Kimi', 'OpenCode Go', '千问', 'API', '代理', '额度'] },
   { id: 'clipboard', name: '剪贴板历史', icon: toolIcons['clipboard'], tags: ['文字', '图片', '搜索', '复制', '历史'] },
   { id: 'ram', name: '内存清理', icon: toolIcons['ram'], tags: ['内存', '清理', 'RAM', '自动清理', '定时'] },
   { id: 'relay', name: '文件中转站', icon: toolIcons['relay'], tags: ['飞牛', 'WebDAV', '上传', '下载', '跨电脑', '缓存'] },
@@ -18,10 +19,12 @@ const tools: { id: Page; name: string; icon: typeof AudioLines; tags: string[] }
   { id: 'practice', name: '口语练习', icon: toolIcons['practice'], tags: ['英文', '朗读', '音标', '循环', '听力'] },
   { id: 'expenses', name: '记账', icon: toolIcons['expenses'], tags: ['项目', '报销', '发票', '附件', 'WebDAV', '表格导出'] },
   { id: 'network', name: '网络诊断', icon: toolIcons['network'], tags: ['DNS', 'TCP', 'TLS', 'HTTP', '端口', '连接', 'WebDAV'] },
-  { id: 'shizuku', name: 'Shizuku', icon: toolIcons['shizuku'], tags: ['安卓', '无线调试', '启动', '手机', 'ADB'] },
   { id: 'fnconnect', name: 'FN 远程访问', icon: toolIcons['fnconnect'], tags: ['FN Connect', '端口映射', '局域网', '代理'] },
   { id: 'gpu', name: '独显省电守卫', icon: toolIcons['gpu'], tags: ['核显', '电池', '续航', '功耗', 'GPU'] },
+  { id: 'netmount', name: '硬盘挂载', icon: toolIcons['netmount'], tags: ['SFTP', 'WebDAV', 'RaiDrive', '盘符', 'NAS', '自动挂载'] },
+  { id: 'stackchan', name: '桌面机器人', icon: toolIcons['stackchan'], tags: ['StackChan', '天气', 'PC 状态', 'Codex 额度'] },
   { id: 'codex', name: 'Codex 配置', icon: toolIcons['codex'], tags: ['模型', '上下文', '开发'] },
+  { id: 'script-tools', name: '脚本工具', icon: toolIcons['script-tools'], tags: ['同步', 'MCP', 'Codex', 'Harness', '维护'] },
   { id: 'scripts', name: '快捷脚本', icon: toolIcons['scripts'], tags: ['选区', '翻译', '解散文件夹', '脚本', '触发条件'] },
   { id: 'plugins', name: '扩展工具', icon: toolIcons['plugins'], tags: ['插件', '安装', '扩展'] },
 ];

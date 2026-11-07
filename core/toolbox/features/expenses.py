@@ -137,9 +137,12 @@ def register(app):
     unprojected = set()
 
     def journal(item, previous=None, operation_id=None):
-        fields = ('title', 'date', 'amount', 'amount_minor', 'currency', 'entry_type', 'status', 'category', 'notes', 'project_id', 'created_at')
+        fields = ('title', 'date', 'amount', 'amount_minor', 'currency', 'entry_type', 'status', 'category', 'notes', 'project_id', 'created_at', 'split_enabled')
         before = previous or {}
         changes = {key: item[key] for key in fields if key in item and item.get(key) != before.get(key)}
+        # Missing means the legacy shared behavior; don't rewrite old journals.
+        if item.get('split_enabled', True) and before.get('split_enabled', True):
+            changes.pop('split_enabled', None)
         old_attachments = {value['id']: value for value in before.get('attachments', [])}
         new_attachments = {value['id']: value for value in item.get('attachments', [])}
         for aid, attached in new_attachments.items():
@@ -222,6 +225,9 @@ def register(app):
             item['entry_type'] = entry_type
             item['status'] = normalized_status(item['status'], entry_type)
             item['project_id'] = item.get('project_id', DEFAULT_PROJECT)
+            item['split_enabled'] = item.get('split_enabled', True)
+            if type(item['split_enabled']) is not bool:
+                raise ValueError()
             if entry_type == 'income' and minor == 0:
                 item['validation_warning'] = '合并后的收入金额为零，请检查金额或收支类型'
         except (KeyError, ValueError, TypeError):
@@ -261,6 +267,9 @@ def register(app):
             if entry_type not in ENTRY_TYPES:
                 raise ValueError('请选择支出或转账收入')
             item['entry_type'] = entry_type
+            item['split_enabled'] = params.get('split_enabled', item.get('split_enabled', True))
+            if type(item['split_enabled']) is not bool:
+                raise ValueError('均摊设置应为开关值')
             if entry_type == 'income' and item['amount_minor'] <= 0:
                 raise ValueError('转账收入金额必须大于零')
             currency = params.get('currency', item.get('currency', 'CNY'))
@@ -279,7 +288,7 @@ def register(app):
                 raise ValueError('请选择有效且未归档的项目')
             if prepare_only:
                 return item, previous
-            if previous and all(item[key] == previous.get(key) for key in ('title', 'date', 'amount', 'currency', 'entry_type', 'status', 'category', 'notes', 'project_id')):
+            if previous and all(item[key] == previous.get(key) for key in ('title', 'date', 'amount', 'currency', 'entry_type', 'status', 'category', 'notes', 'project_id', 'split_enabled')):
                 return copy.deepcopy(previous)
             item.update(revision=item['revision'] + 1, updated_at=time.time())
             journal(item, previous)
@@ -338,7 +347,7 @@ def register(app):
         items.sort(key=lambda item: (item['date'], item['created_at']), reverse=True)
         totals = {}
         for item in items:
-            group = totals.setdefault(item['currency'], {name: 0 for name in ('expense_total', 'reimbursed', 'pending', 'non_reimbursable', 'transfer_income', 'count', 'expense_count', 'income_count')})
+            group = totals.setdefault(item['currency'], {name: 0 for name in ('expense_total', 'reimbursed', 'pending', 'non_reimbursable', 'transfer_income', 'share_base', 'excluded_expense_total', 'count', 'expense_count', 'income_count')})
             if item['entry_type'] == 'income':
                 group['transfer_income'] += item['amount_minor']
                 group['income_count'] += 1
@@ -346,6 +355,10 @@ def register(app):
                 group['expense_total'] += item['amount_minor']
                 group['pending' if item['status'] == 'waiting' else item['status']] += item['amount_minor']
                 group['expense_count'] += 1
+                if not item['split_enabled']:
+                    group['excluded_expense_total'] += item['amount_minor']
+                elif item['status'] != 'reimbursed':
+                    group['share_base'] += item['amount_minor']
             group['count'] += 1
         summary = []
         for currency in CURRENCIES:
@@ -353,8 +366,8 @@ def register(app):
                 continue
             group = totals[currency]
             group['net'] = group['transfer_income'] + group['reimbursed'] - group['expense_total']
-            # Split the whole period's unreimbursed cost once, rounding half a cent up.
-            group['share_due'] = (group['expense_total'] - group['reimbursed'] + 1) // 2
+            # Split only participating unreimbursed costs, once per currency/period.
+            group['share_due'] = (group['share_base'] + 1) // 2
             group['settlement_remaining'] = group['share_due'] - group['transfer_income']
             if settlement_mode != 'half':
                 group['share_due'] = 0
@@ -402,20 +415,103 @@ def register(app):
             raise ValueError('附件不属于此费用条目')
         return attached
 
+    def verified_path(item, attached):
+        path = owned_path(item['id'], attached)
+        if not path.is_file() or path.stat().st_size != attached['size']:
+            raise ValueError('附件文件缺失或大小发生变化')
+        digest = hashlib.sha256()
+        with path.open('rb') as source:
+            while block := source.read(1024 * 1024):
+                digest.update(block)
+        if digest.hexdigest() != attached['sha256']:
+            raise ValueError('附件校验失败，文件可能已修改')
+        return path
+
     def attachment_get(params):
         with lock:
             item = read(params.get('id'))
             attached = selected(item, params.get('attachment_id'))
-            path = owned_path(item['id'], attached)
-            if not path.is_file() or path.stat().st_size != attached['size']:
-                raise ValueError('附件文件缺失或大小发生变化')
-            digest = hashlib.sha256()
-            with path.open('rb') as source:
-                while block := source.read(1024 * 1024):
-                    digest.update(block)
-            if digest.hexdigest() != attached['sha256']:
-                raise ValueError('附件校验失败，文件可能已修改')
+            path = verified_path(item, attached)
             return {'path': str(path), 'name': attached['original_name'], 'kind': attached['kind'], 'mime': TYPES[path.suffix.lower()]}
+
+    MERGE_SUFFIXES = ('.pdf', '.png', '.jpg', '.jpeg', '.webp')
+
+    def merge_selection(item, params):
+        wanted = params.get('attachment_ids')
+        if wanted is None:
+            return list(item['attachments'])
+        if (not isinstance(wanted, list) or not 1 <= len(wanted) <= 100
+                or any(not isinstance(aid, str) for aid in wanted) or len(set(wanted)) != len(wanted)):
+            raise ValueError('合并附件选择无效')
+        for aid in wanted:
+            selected(item, aid)
+        wanted = set(wanted)
+        return [attached for attached in item['attachments'] if attached['id'] in wanted]
+
+    def merge_job(job):
+        with lock:
+            item = read(job.params.get('id'))
+            chosen = merge_selection(item, job.params)
+        suffixes = {attached['id']: PurePosixPath(attached['relative_path']).suffix.lower() for attached in chosen}
+        skipped = [attached for attached in chosen if suffixes[attached['id']] == '.ofd']
+        mergeable = [attached for attached in chosen if suffixes[attached['id']] in MERGE_SUFFIXES]
+        if not mergeable:
+            raise ValueError('没有可合并的附件：仅支持 PDF 与图片，OFD 请先自行转换')
+        from PIL import Image, ImageOps
+        import pypdfium2 as pdfium
+        folder = app.data_dir / 'exports' / 'attachments'
+        no_links(folder, app.data_dir)
+        folder.mkdir(parents=True, exist_ok=True)
+        safe = re.sub(r'[\\/:*?"<>|\r\n\t]', '_', item['title']).strip()[:60] or '条目'
+        path = folder / f'{safe}-附件合并-{time.strftime("%Y%m%d-%H%M%S")}-{uuid.uuid4().hex[:6]}.pdf'
+        pages = 0
+        with tempfile.TemporaryDirectory(prefix='.merge-', dir=root) as directory:
+            destination = pdfium.PdfDocument.new()
+            try:
+                for index, attached in enumerate(mergeable):
+                    job.check_cancelled()
+                    source = verified_path(item, attached)
+                    job.progress(5 + 90 * index // len(mergeable), '正在合并 ' + attached['original_name'])
+                    if source.suffix.lower() == '.pdf':
+                        with pdfium.PdfDocument(str(source)) as document:
+                            pages += len(document)
+                            destination.import_pages(document)
+                        continue
+                    with Image.open(source) as image:
+                        image = ImageOps.exif_transpose(image)
+                        if image.mode != 'RGB':
+                            flat = Image.new('RGB', image.size, (255, 255, 255))
+                            if image.mode in ('RGBA', 'LA') or (image.mode == 'P' and 'transparency' in image.info):
+                                image = image.convert('RGBA')
+                                flat.paste(image, mask=image.split()[-1])
+                            else:
+                                flat.paste(image.convert('RGB'))
+                            image = flat
+                        width, height = image.size
+                        # One receipt per A4 page with margins; pixels stay untouched.
+                        resolution = max(width / 7.47, height / 10.89, 72.0)
+                        temporary = Path(directory) / (attached['id'] + '.pdf')
+                        image.save(temporary, 'PDF', resolution=resolution)
+                    with pdfium.PdfDocument(str(temporary)) as document:
+                        pages += len(document)
+                        destination.import_pages(document)
+                job.check_cancelled()
+                destination.save(str(path))
+            finally:
+                destination.close()
+        job.artifact(path, 'pdf', path.name)
+        job.progress(100, '附件已合并为单一 PDF')
+        return {'path': str(path), 'pages': pages, 'merged': len(mergeable),
+                'skipped': [attached['original_name'] for attached in skipped]}
+
+    def merge(params):
+        with lock:
+            item = read(params.get('id'))
+            chosen = merge_selection(item, params)
+            if not [attached for attached in chosen
+                    if PurePosixPath(attached['relative_path']).suffix.lower() in MERGE_SUFFIXES]:
+                raise ValueError('没有可合并的附件：仅支持 PDF 与图片，OFD 请先自行转换')
+        return app.jobs.submit('expenses.attachments.merge', {'id': item['id'], 'attachment_ids': params.get('attachment_ids')})
 
     def remove(params, attachment=False):
         with lock:
@@ -547,6 +643,7 @@ def register(app):
 
     def commit_job(job):
         params = job.params
+        ai_entry_id = app.expense_ai_candidate(params['ai_draft']) if 'ai_draft' in params else None
         try:
             request_id = uuid.UUID(params.get('request_id', '')).hex
         except (ValueError, TypeError, AttributeError):
@@ -564,6 +661,13 @@ def register(app):
                 or any(not isinstance(a, dict) or set(a) != {'path', 'kind'} or not isinstance(a['path'], str)
                        or not isinstance(a['kind'], str) or a['kind'] not in KINDS for a in additions)):
             raise ValueError('附件保存参数无效')
+        kind_changes = params.get('attachments_kind', [])
+        if (not isinstance(kind_changes, list) or len(kind_changes) > 100
+                or any(not isinstance(change, dict) or set(change) != {'id', 'kind'} or not isinstance(change['id'], str)
+                       or change['kind'] not in KINDS for change in kind_changes)
+                or len({change['id'] for change in kind_changes}) != len(kind_changes)
+                or any(change['id'] in removals for change in kind_changes)):
+            raise ValueError('附件分类修改参数无效')
 
         def recover(entry_id):
             if hasattr(job, 'mark_committed'):
@@ -575,6 +679,8 @@ def register(app):
             return {'entry': get({'id': entry_id})}
 
         with app.data_lock, lock:
+            if ai_entry_id and ledger.get('entry', ai_entry_id):
+                return recover(ai_entry_id)
             if intent_path.exists():
                 intent = json.loads(intent_path.read_text('utf-8'))
                 if intent['digest'] != digest:
@@ -583,9 +689,11 @@ def register(app):
                     return recover(intent['entry_id'])
             item, previous = save(params, prepare_only=True)
             if not previous:
-                item['id'] = uuid.uuid5(uuid.NAMESPACE_URL, 'wintoolbox-expense-entry/' + request_id).hex
+                item['id'] = ai_entry_id or uuid.uuid5(uuid.NAMESPACE_URL, 'wintoolbox-expense-entry/' + request_id).hex
             for aid in removals:
                 selected(item, aid)
+            for change in kind_changes:
+                selected(item, change['id'])
             atomic_json(intent_path, {'digest': digest, 'entry_id': item['id']})
         created = []
         committed = False
@@ -649,6 +757,10 @@ def register(app):
                                     job.check_cancelled()
                                     output.write(block)
                     item['attachments'] = [a for a in item['attachments'] if a['id'] not in removals] + staged
+                    kinds = {change['id']: change['kind'] for change in kind_changes}
+                    for attached in item['attachments']:
+                        if attached['id'] in kinds:
+                            attached['kind'] = kinds[attached['id']]
                     item.update(revision=item['revision'] + 1, updated_at=time.time())
                     # One immutable operation publishes fields, additions and removals together.
                     job.check_cancelled()
@@ -672,10 +784,12 @@ def register(app):
     app.register('expenses.commit', lambda params: app.jobs.submit('expenses.commit', params))
 
     app.jobs.register('expenses.attach', attach_job)
+    app.jobs.register('expenses.attachments.merge', merge_job)
     for name, handler in (('list', listing), ('get', get), ('save', save), ('attach', attach), ('attachment', attachment_get)):
         app.register('expenses.' + name, handler)
     app.register('expenses.delete', remove)
     app.register('expenses.attachment.delete', lambda p: remove(p, attachment=True))
+    app.register('expenses.attachments.merge', merge)
     # One-time migration preserves IDs, amounts, receipts and original AI settlement.
     def migrate():
         for path in records.glob('*.json'):
@@ -687,3 +801,5 @@ def register(app):
     migrate()
     materialize()  # Recover durable edits after interruption before cache publication.
     register_service(app, ledger, materialize, listing, text_field, lock)
+    from .expenses_ai import register as register_ai
+    register_ai(app)

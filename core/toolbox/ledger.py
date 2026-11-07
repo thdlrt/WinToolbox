@@ -33,7 +33,7 @@ def validate(op):
             or type(op.get('created_at')) not in (int, float) or not math.isfinite(op['created_at']) or op['created_at'] < 0
             or len(canonical(op)) > 1024 * 1024):
         raise ValueError('记账同步操作格式无效')
-    allowed = {'entry': {'title', 'date', 'amount', 'amount_minor', 'currency', 'entry_type', 'status', 'category', 'notes', 'project_id', 'created_at'},
+    allowed = {'entry': {'title', 'date', 'amount', 'amount_minor', 'currency', 'entry_type', 'status', 'category', 'notes', 'project_id', 'created_at', 'split_enabled'},
                'project': {'name', 'settlement_mode', 'created_at', 'archived'},
                'network_profile': {'name', 'target', 'port', 'timeout_ms', 'attempts'}}[op['entity_type']]
     for key, value in op['changes'].items():
@@ -64,6 +64,8 @@ def validate(op):
                 raise ValueError('记账同步选项无效：' + key)
         elif key == 'archived' and type(value) is not bool:
             raise ValueError('项目归档状态无效')
+        elif key == 'split_enabled' and type(value) is not bool:
+            raise ValueError('均摊设置应为开关值')
         elif key == 'project_id' and (not isinstance(value, str) or not ID.fullmatch(value)):
             raise ValueError('记账项目标识无效')
         elif key == 'date':

@@ -194,14 +194,16 @@ def register_service(app, ledger, materialize, listing, text_field, expense_lock
         with getattr(app, 'data_lock', contextlib.nullcontext()), expense_lock:
             result = listing(job.params)
             projects_by_id = {v['id']: v['name'] for v in ledger.list_entities('project', include_deleted=True)}
-        rows = [['项目', '日期', '收支类型', '标题', '分类', '币种', '金额', '报销状态', '备注', '附件名称', '条目标识']]
+        rows = [['项目', '日期', '收支类型', '标题', '分类', '币种', '金额', '报销状态', '备注', '附件名称', '条目标识', '参与均摊']]
         statuses = {'waiting': '等待报销', 'reimbursed': '已报销', 'non_reimbursable': '不可报销', 'not_applicable': '不适用'}
         for item in result['items']:
             job.check_cancelled()
             rows.append([projects_by_id.get(item['project_id'], item['project_id']), item['date'],
                          '收入' if item['entry_type'] == 'income' else '支出', item['title'], item['category'],
                          item['currency'], item['amount'], statuses[item['status']], item['notes'],
-                         '; '.join(a['original_name'] for a in item['attachments']), item['id']])
+                         '; '.join(a['original_name'] for a in item['attachments']), item['id'],
+                         ('是' if item.get('split_enabled', True) else '否') if item['entry_type'] == 'expense' and
+                         (ledger.get('project', item['project_id']) or {}).get('settlement_mode') == 'half' else '不适用'])
         folder = app.data_dir / 'exports' / 'ledger'
         folder.mkdir(parents=True, exist_ok=True)
         fmt = job.params['format']

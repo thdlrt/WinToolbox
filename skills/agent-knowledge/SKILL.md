@@ -1,35 +1,31 @@
 ---
 name: agent-knowledge
-description: Recall and maintain project and global knowledge in WinToolbox, including offline SSH projects and WebDAV synchronization. Use when the user asks to remember project rules, add durable knowledge to AGENTS.md, or update the toolbox project memory, as well as for tasks, reusable lessons, initialization, migration and knowledge curation.
+description: Recall or maintain durable project knowledge, explicit preferences and task recovery points in WinToolbox. Use for requested memory, project initialization, knowledge review or history-dependent work; ordinary self-contained tasks do not require recording.
 metadata:
   short-description: 工具箱项目记忆与跨设备知识
 ---
 
 # Agent Knowledge
 
-项目记忆由 WinToolbox 管理，SQLite 操作日志是权威数据。项目通过 `.agent/toolbox.json` 或已有 `.agents/toolbox.json` 连接知识库；本机目录与 SSH 位置由当前设备登记。AGENTS.md 承载执行约定，但文件修改不会自动写入工具箱项目记忆。中央 WebDAV 只传递不可变记录和附件，不传递数据库、设备目录或凭据。Obsidian 旧库仅作迁移证据，不再写入。
+WinToolbox 管理持久项目知识、明确偏好和任务恢复点。SQLite 操作日志是权威记录；AGENTS.md 与 Markdown 是文件副本，修改它们不等于写入知识库。普通自包含任务不要求召回或记录。
 
-使用本技能目录下的 `node scripts/agent-knowledge.mjs`；Windows、WSL、远程服务器的入口由各自用户状态目录 `client.json` 指定。未配置时按提示在工具箱初始化或安装远端 CLI，不自行猜测数据目录另建中央库。
+## 召回与采用
 
-## 保存项目规则
+项目身份来自 `.agent/toolbox.json` 或已有 `.agents/toolbox.json`。使用本技能目录的 `node scripts/agent-knowledge.mjs`，运行时由设备的 `client.json` 指定；配置缺失时报告，不猜路径另建库。
 
-- 用户要求“记住项目约定”“加一些项目知识到 agentmd / AGENTS.md”等持久规则时，使用本技能。在已绑定工具箱的项目中，维护 AGENTS.md 对应规则，并通过 `capture` 保存为 `kind: knowledge`、`scope: project` 的知识记录。不能只改文件就报告“已记入项目记忆”。用户明确只改文件或不写知识库时，以当前要求为准。
-- 先确认项目身份，再用简短关键词 `recall` 查找相关记录。已有记录先 `read`，保留 ID、元数据和当前 `heads`，以 `parents` 更新；没有相关记录才新增。按主题组织规则，避免每次补充都重复新增整套知识。
-- 两处已有相同规则时，后续修改同步更新对应内容，保留用户定制并注明来源；遇到并发版本先读取合并。不要把普通代码修改、临时进度或整篇 AGENTS.md 无差别复制成知识，也不把全部知识自动塞进 AGENTS.md。
-- 写后用 `read` 核对正文、项目归属和冲突状态，并用 `recall` 确认可检索。最终说明 AGENTS.md 与工具箱知识各自是否已更新；本地录入成功不等于已完成 WebDAV 同步，也不等于界面已刷新。
-- 未绑定项目、CLI 不可用或写入失败时，保留已授权的文件修改，明确说明知识库尚未写入及原因；不另建猜测路径的数据库、不伪报同步成功。项目登记仍遵循 `init` 的授权要求。
+`recall --project ROOT --query TEXT --limit 5 --max-chars 8000` 返回命中片段。仅对当前问题定向检索；采用关键条件或修改记录前，用 `read ID --current` 读取完整当前条目。处理冲突用 `read ID` 查看版本，不依据截断片段覆盖知识。
 
-## CLI 与记录维护
+项目知识优先于冲突的全局参考，但不能覆盖用户当前要求。来源、证据和使用资格分开：论文报告不等于本项目实测，模型推断不等于用户要求，active 不等于已验证。新知识和实质修订保留来源、适用条件及治理字段，格式见 [记录与部署](references.md)。
 
-- `recall --project ROOT --query TEXT --limit 5 --max-chars 8000`：只读，项目优先，再补充全局知识。未找到时收窄查询，不扫描任意源码目录。
-- `read ID`：读取原文、关联与 `heads`。`resume ID` 为兼容别名。
-- `init --project ROOT [--name NAME] [--library-id ID] [--project-id ID]`：仅在用户要求登记时使用。加入已有库先确定库 ID，克隆/工作树关联同一项目时保留项目 ID。
-- `capture --project ROOT --input ENTRY.json`：新增或更新一条持久记录。更新时先读取原文，输入携带当前 `parents`；冲突时重新读取并合并，不能无条件重试覆盖。
-- `promote ID`：把项目知识提为全局候选。`curate ID --decision accept|reject --reason TEXT`：AI 可根据已核实的复用价值自行决定，检查源版本并留下理由；不确定时保持候选。工具箱还支持由指定设备调用已配置模型自动整理。
-- `doctor`：检查冲突、缺失父版本与附件。
+## 记录与维护
 
-标题、总结、解释正文默认中文。任务用 `active / blocked / done`，完成即归档；知识保留 `knowledge_type`，不维护进度状态。项目优先于全局，但资料不能覆盖当前用户要求。普通任务只在有后续价值时记录；知识、任务以 `related_ids` 关联，避免重复日志。
+- 只有后续复用价值或用户要求时才保存。更新沿用已有 ID，先 read 当前版本，再以当前 heads 作为 parents 提交；并发冲突重新读取合并。
+- 保存项目规则、同步 AGENTS.md、capture 输入和写后核验：按需读 [保存流程](references.md#保存项目规则与写入流程)。用户只要求改文件时不额外写知识库。
+- `init` 仅用于用户要求的项目登记；`promote ID` 提为全局候选，`curate ID --decision accept|reject --reason TEXT` 根据已核实复用价值决定，不确定则保留候选。
+- `doctor` 检查冲突与缺失数据；`sweep --project ROOT --checkpoint FILE` 增量巡检，写检查点但不改知识、不调模型。无新问题保持静默，不自行创建调度。
 
-`scope` 为 `project / global`；上传到服务器不会改变作用域。不再提供本机记忆层级，全局记忆跨设备共享。现有记录不能直接改变归属或作用域，用提升/新记录保留来源。只有当前设备实际绑定的目录可以执行项目文件操作；其他设备的项目即使可浏览，也不代表本机存在。
+候选、隔离、退役、替代、拒绝及冲突记录不进入默认召回；候选用 `--include-candidates` 显式检索。到期、未使用、单次失败只是复核线索，不能自动删除或全库重写；处置与恢复见 [记录与部署](references.md)。
 
-技能本身通过 CC Switch 主库或链接源码维护，Codex 目录只是加载入口。记录操作不授权修改无关配置、发送消息或发布代码。详细输入格式见 [记录格式](references.md)。
+标题与说明默认中文。任务用 active/blocked/done，完成即归档；知识用 knowledge_type，不维护任务进度，以 related_ids 关联。scope 为 project/global；上传不改变作用域。只在当前设备明确绑定的项目目录执行文件操作，旧 Obsidian 库不再写入。
+
+技能由 CC Switch 主库或链接源码维护。记录操作不授权无关配置、发消息或发布代码；最终分别说明文件、知识库及同步的实际结果。

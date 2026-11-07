@@ -95,7 +95,7 @@ class Job:
     def __init__(self, service, **params):
         self.params = {'revision': service.config().get('revision'), **params}
     def check_cancelled(self): pass
-    def progress(self, *args): pass
+    def progress(self, *args, **kwargs): pass
 
 
 @pytest.fixture
@@ -401,11 +401,17 @@ def test_real_http_stream_upload_and_download(tmp_path):
             self.send_response(response.status_code)
             self.send_header('Content-Length', str(len(response.content)))
             self.end_headers()
-            if response.content: self.wfile.write(response.content)
+            if self.command == 'GET':
+                for offset in range(0, len(response.content), 64 * 1024):
+                    self.wfile.write(response.content[offset:offset + 64 * 1024])
+                    self.wfile.flush()
+                    time.sleep(.015)
+            elif response.content: self.wfile.write(response.content)
         do_PROPFIND = do_PUT = do_MOVE = do_GET = do_DELETE = do_MKCOL = dispatch
     server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
     worker = threading.Thread(target=server.serve_forever, daemon=True); worker.start()
-    app = App(tmp_path / 'data', register_features=False, register_live=False)
+    events = []
+    app = App(tmp_path / 'data', emit=events.append, register_features=False, register_live=False)
     try:
         relay.register(app)
         relay.atomic_json(app.data_dir / 'webdav.json', {'url': f'http://127.0.0.1:{server.server_port}/dav/', 'username': 'user', 'password_dpapi': relay.protect('pass'), 'remote_path': 'WinToolbox'})
@@ -413,8 +419,15 @@ def test_real_http_stream_upload_and_download(tmp_path):
         source = tmp_path / 'large.bin'; source.write_bytes(bytes(range(256)) * 10000)
         result = finish(app, app.call('relay.upload', {'paths': [str(source)]}))
         assert not result['errors'] and result['uploaded'] == ['large.bin']
-        result = finish(app, app.call('relay.download', {'paths': ['large.bin']}))
+        record = app.call('relay.download', {'paths': ['large.bin']})
+        result = finish(app, record)
         assert Path(result['paths'][0]).read_bytes() == source.read_bytes()
+        updates = [event['job'] for event in events if event.get('type') == 'job.updated' and event['job']['id'] == record['id'] and event['job'].get('transfer')]
+        streaming = [update for update in updates if update['status'] == 'running' and update['transfer']['phase'] == 'downloading']
+        assert any(0 < update['transfer']['received_bytes'] < source.stat().st_size and update['transfer']['bytes_per_second'] > 0 for update in streaming)
+        assert all(update['progress'] <= 99 for update in updates if update['status'] == 'running')
+        assert updates[-1]['status'] == 'completed' and updates[-1]['progress'] == 100
+        assert updates[-1]['transfer']['received_bytes'] == source.stat().st_size
     finally:
         app.close(); server.shutdown(); server.server_close(); worker.join(timeout=2)
 
@@ -443,6 +456,44 @@ def test_empty_directory_download_is_preserved(fixture, tmp_path):
     dav.dirs.add('/dav/WinToolbox/file-relay/empty/')
     result = service.run('download', Job(service, paths=['empty']))
     assert not result['paths'] and (tmp_path / 'downloads/empty').is_dir()
+
+
+def test_download_progress_covers_deduplicated_batch_and_zero_byte_files(fixture):
+    app, _, dav = fixture
+    dav.dirs.add('/dav/WinToolbox/file-relay/batch/')
+    dav.add('/dav/WinToolbox/file-relay/batch/large.bin', b'x' * 150000)
+    dav.add('/dav/WinToolbox/file-relay/batch/small.bin', b'y' * 10000)
+    dav.add('/dav/WinToolbox/file-relay/batch/empty.bin', b'')
+    events = []
+    app._emit = events.append
+    record = app.call('relay.download', {'paths': ['batch', 'batch/small.bin']})
+    result = finish(app, record)
+    assert len(result['paths']) == 3
+    updates = [event['job'] for event in events if event.get('type') == 'job.updated' and event['job']['id'] == record['id'] and event['job'].get('transfer')]
+    received = [update['transfer']['received_bytes'] for update in updates]
+    assert received == sorted(received) and received[-1] == 160000
+    assert all(update['transfer']['total_bytes'] == 160000 and update['transfer']['file_count'] == 3 for update in updates)
+    assert {update['transfer']['file_index'] for update in updates} == {1, 2, 3}
+    assert updates[-1]['progress'] == 100
+
+
+def test_cancel_download_during_validation_never_publishes_partial_file(fixture, tmp_path):
+    app, _, dav = fixture
+    dav.add('/dav/WinToolbox/file-relay/cancel.bin', b'x' * 200000)
+    def cancel_on_validation(event):
+        record = event.get('job', {})
+        if record.get('tool') == 'relay.download' and record.get('transfer', {}).get('phase') == 'verifying':
+            app.jobs.active[record['id']].cancel_event.set()
+    app._emit = cancel_on_validation
+    record = app.call('relay.download', {'paths': ['cancel.bin']})
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        result = app.jobs.get(record['id'])
+        if result['status'] == 'cancelled': break
+        time.sleep(.02)
+    assert result['status'] == 'cancelled' and result['progress'] < 100
+    assert not (tmp_path / 'downloads/cancel.bin').exists()
+    assert not list((tmp_path / 'downloads').glob('.relay-download-*'))
 
 
 def test_selected_delete_preserves_changed_and_unselected_files(fixture):

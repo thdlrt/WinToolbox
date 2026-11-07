@@ -4,7 +4,7 @@ export type AttachmentKind = 'invoice' | 'receipt' | 'payment' | 'other';
 export interface ExpenseAttachment { id: string; original_name: string; kind: AttachmentKind; size?: number; mime?: string }
 export const legacyExpenseProject = '00000000000000000000000000000001';
 export interface ExpenseProject { id: string; name: string; archived?: boolean; settlement_mode: 'general' | 'half'; revision?: number; heads?: string[] }
-export interface ExpenseDraft { project_id: string; title: string; date: string; amount: string; currency: string; entry_type: ExpenseType; status: ExpenseStatus; category: string; notes: string }
+export interface ExpenseDraft { project_id: string; title: string; date: string; amount: string; currency: string; entry_type: ExpenseType; status: ExpenseStatus; category: string; notes: string; split_enabled: boolean }
 export interface ExpenseEntry extends ExpenseDraft { id: string; revision: number; attachments: ExpenseAttachment[]; created_at?: string; updated_at?: string; validation_warning?: string }
 export interface ExpenseSummary { currency: string; expense_total: string; pending: string; reimbursed: string; share_due: string; transfer_income: string; settlement_remaining: string; net: string; count: number }
 export interface ExpensePeriod { start_month: string; end_month: string; start_date?: string; end_date?: string }
@@ -14,7 +14,7 @@ export const emptyExpenseFilters = (): ExpenseFilters => ({ query: '', entry_typ
 export const attachmentKinds = { invoice: '发票', receipt: '收据', payment: '支付记录', other: '其他' };
 export function localDate(value = new Date()) { return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, '0')}-${String(value.getDate()).padStart(2, '0')}`; }
 export function newExpense(month: string, today = localDate()): ExpenseDraft {
-  return { project_id: legacyExpenseProject, title: '', date: today.startsWith(`${month}-`) ? today : `${month}-01`, amount: '', currency: 'CNY', entry_type: 'expense', status: 'waiting', category: 'AI订阅', notes: '' };
+  return { project_id: legacyExpenseProject, title: '', date: today.startsWith(`${month}-`) ? today : `${month}-01`, amount: '', currency: 'CNY', entry_type: 'expense', status: 'waiting', category: 'AI订阅', notes: '', split_enabled: true };
 }
 export function normalizedExpenseStatus(status: string, type: ExpenseType): ExpenseStatus {
   if (type === 'income') return 'not_applicable';
@@ -22,10 +22,10 @@ export function normalizedExpenseStatus(status: string, type: ExpenseType): Expe
   if (status === 'personal' || status === 'non_reimbursable') return 'non_reimbursable';
   return 'waiting';
 }
-export function expenseDraft(item: Omit<ExpenseDraft, 'entry_type' | 'status'> & { entry_type?: ExpenseType; status: string }): ExpenseDraft {
+export function expenseDraft(item: Omit<ExpenseDraft, 'entry_type' | 'status' | 'split_enabled'> & { entry_type?: ExpenseType; status: string; split_enabled?: boolean }): ExpenseDraft {
   const { title, date, amount, currency, category, notes } = item;
   const entry_type = item.entry_type === 'income' ? 'income' : 'expense';
-  return { project_id: item.project_id || legacyExpenseProject, title, date, amount, currency, entry_type, status: normalizedExpenseStatus(item.status, entry_type), category, notes };
+  return { project_id: item.project_id || legacyExpenseProject, title, date, amount, currency, entry_type, status: normalizedExpenseStatus(item.status, entry_type), category, notes, split_enabled: item.split_enabled !== false };
 }
 export function normalizeExpenseEntry(item: ExpenseEntry): ExpenseEntry { return { ...item, ...expenseDraft(item) }; }
 export function changeExpenseType(draft: ExpenseDraft, entry_type: ExpenseType, defaultCategory = true): ExpenseDraft {
@@ -52,6 +52,7 @@ export function expenseValidation(draft: ExpenseDraft): string {
   if (!draft.title.trim()) return '请填写名称。';
   if (!draft.category.trim()) return '请填写分类。';
   if (!expenseDateValid(draft.date)) return '请选择有效日期。';
+  if (!['CNY', 'USD', 'EUR', 'HKD'].includes(draft.currency)) return '请选择币种。';
   if (!expenseAmountValid(draft.amount)) return '金额需为 0 至 999999999.99，最多两位小数。';
   if (draft.entry_type === 'income' && !/[1-9]/.test(draft.amount)) return '转账收入金额需大于 0。';
   return '';

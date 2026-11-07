@@ -1,4 +1,4 @@
-import { AudioLines, Boxes, Captions, Command, FolderSync, FolderUp, House, MemoryStick, Radio, ReceiptText, Settings2, Smartphone, Sparkles, Speech } from 'lucide-react';
+import { AudioLines, Boxes, Captions, Command, FolderSync, FolderUp, House, MemoryStick, Radio, ReceiptText, Settings2, Sparkles, Speech } from 'lucide-react';
 
 export const orbActions = [
   { id: 'clean', label: '清理内存', description: '立即按已保存模式清理', icon: Sparkles },
@@ -14,7 +14,6 @@ export const orbActions = [
   { id: 'practice', label: '口语练习', description: '打开口语练习', icon: Speech },
   { id: 'phonetics', label: '音标教学', description: '打开音标教学', icon: Speech },
   { id: 'expenses', label: '记账', description: '打开记账', icon: ReceiptText },
-  { id: 'shizuku', label: 'Shizuku', description: '打开安卓工具', icon: Smartphone },
   { id: 'fnconnect', label: '远程访问', description: '打开 FN 远程访问', icon: Radio },
   { id: 'gpu', label: '独显守卫', description: '打开独显省电守卫', icon: Boxes },
   { id: 'codex', label: 'Codex 配置', description: '打开 Codex 配置', icon: Command },

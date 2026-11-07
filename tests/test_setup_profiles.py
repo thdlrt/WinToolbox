@@ -102,6 +102,7 @@ def test_local_profiles_set_asr_and_all_roles(app, preset):
         assert preferences[key] == preset[key]
     assert preferences["local_preset"] == preset["id"]
     assert result["roles"]["chat"]["model"] == preset["llm_model"]
+    assert result["roles"]["expense_import"] == {"provider_id": "local", "model": preset["llm_model"]}
     assert all(role["provider_id"] == "local" for role in result["roles"].values())
     assert result["roles"]["embedding"]["model"] == "embeddinggemma:latest"
 

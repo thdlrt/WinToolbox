@@ -26,10 +26,19 @@ MESSAGE_ID = re.compile(r'^om_[A-Za-z0-9_-]+$')
 CHAT_ID = re.compile(r'^oc_[A-Za-z0-9_-]+$')
 USER_ID = re.compile(r'^ou_[A-Za-z0-9_-]+$')
 THREAD_ID = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')
+SESSION_ID = re.compile(r'^session-[A-Za-z0-9-]{8,}$')
 MAX_QUESTION_PAGES = 20
 TYPES = {'text', 'post', 'image', 'file', 'audio', 'video'}
+TARGETS = {'codex', 'dsh'}
+# Second bot (its own lark-cli profile) whose messages are answered by a local DSH
+# session instead of a Codex conversation. Disabled by default; the Codex route is
+# unchanged when it stays off.
+DSH_DEFAULT = {'enabled': False, 'profile': '', 'app_id': '', 'bot_open_id': '',
+               'dsh_profile': 'headless', 'command': '', 'workspace': '',
+               'default_session': '', 'ack_text': '收到，我看下～',
+               'permission_mode': 'danger-full-access', 'timeout_seconds': 900}
 DEFAULT = {'enabled': False, 'app_id': '', 'bot_open_id': '', 'ack_text': '塔菲思考中，喵～',
-           'reply_wait_seconds': 900, 'rules': []}
+           'reply_wait_seconds': 900, 'rules': [], 'dsh': dict(DSH_DEFAULT)}
 
 
 class UnrelatedGroupReply(RuntimeError):
@@ -42,13 +51,52 @@ class QuestionRoutingNeedsChoice(RuntimeError):
 
 def executable(name):
     path = shutil.which(name)
-    if not path:
+    if path:
+        return path
+    if name == 'codex.exe':
+        path = discover_codex()
+        if path:
+            return path
+        raise RuntimeError('未找到 Codex CLI，请安装或启动 Codex 桌面应用后重试。')
+    if name.startswith('lark-cli'):
         raise RuntimeError(f'未找到 {name}，请安装并配置飞书 CLI。')
-    return path
+    raise RuntimeError(f'未找到 {name}，请确认该程序已安装并加入 PATH。')
 
 
-def lark_json(*args, cwd=None, timeout=35):
-    result = subprocess.run([executable('lark-cli.cmd'), *args], cwd=cwd, capture_output=True,
+def discover_codex():
+    """Explorer-launched apps may retain PATH from before a Codex install/update."""
+    locations = []
+    local = os.environ.get('LOCALAPPDATA')
+    roaming = os.environ.get('APPDATA')
+    if local:
+        locations.append((Path(local) / 'OpenAI' / 'Codex' / 'bin', '*/codex.exe'))
+    if roaming:
+        package = Path(roaming) / 'npm' / 'node_modules' / '@openai' / 'codex'
+        locations.append((package / 'node_modules' / '@openai',
+                          'codex-win32-*/vendor/*/bin/codex.exe'))
+        locations.append((package, 'vendor/*/codex/codex.exe'))
+    for root, pattern in locations:
+        candidates = []
+        try:
+            for candidate in root.glob(pattern):
+                try:
+                    if candidate.is_file():
+                        candidates.append((candidate.stat().st_mtime, str(candidate)))
+                except OSError:
+                    continue
+        except OSError:
+            continue
+        if candidates:
+            return max(candidates, key=lambda item: item[0])[1]
+    return ''
+
+
+def lark_json(*args, cwd=None, timeout=35, profile=None):
+    argv = [executable('lark-cli.cmd')]
+    if profile:
+        argv += ['--profile', profile]
+    argv += list(args)
+    result = subprocess.run(argv, cwd=cwd, capture_output=True,
                             text=True, encoding='utf-8', timeout=timeout, creationflags=NO_WINDOW)
     raw = result.stdout if result.returncode == 0 else result.stderr
     try:
@@ -74,6 +122,56 @@ def verify_lark_app(config):
         raise RuntimeError('飞书机器人身份未就绪')
 
 
+def verify_dsh_app(config):
+    """Verify the second bot's lark profile and the local DSH command."""
+    profile = config['dsh']['profile']
+    result = subprocess.run([executable('lark-cli.cmd'), '--profile', profile, 'auth', 'status', '--json'],
+                            capture_output=True, text=True, encoding='utf-8', timeout=15,
+                            creationflags=NO_WINDOW)
+    if result.returncode:
+        raise RuntimeError(f'无法读取飞书 CLI 配置 {profile} 的认证状态')
+    payload = json.loads(result.stdout)
+    app_id = config['dsh']['app_id']
+    if app_id and payload.get('appId') != app_id:
+        raise RuntimeError(f'飞书 CLI 配置 {profile} 的 App ID 与监听配置不一致')
+    if payload.get('identities', {}).get('bot', {}).get('status') != 'ready':
+        raise RuntimeError(f'飞书 CLI 配置 {profile} 的机器人身份未就绪')
+    dsh_command(config)
+
+
+def dsh_command(config):
+    command = config['dsh']['command'] or shutil.which('dsh') or shutil.which('dsh.cmd')
+    if not command:
+        command = discover_dsh()
+    if not command:
+        raise RuntimeError('未找到 dsh 命令，请在 DSH 路由设置中填写可执行文件路径')
+    return command
+
+
+def discover_dsh():
+    """DSH's host-commands shim is not on PATH for every launcher; look in its homes."""
+    roots = []
+    appdata = os.environ.get('APPDATA')
+    localappdata = os.environ.get('LOCALAPPDATA')
+    if appdata:
+        roots.append(Path(appdata) / 'DSH Desktop' / 'host-commands')
+    if localappdata:
+        roots.append(Path(localappdata) / 'Programs' / 'DSH Desktop' / 'host-commands')
+    candidates = []
+    for root in roots:
+        if not root.is_dir():
+            continue
+        candidates.extend(root.glob('**/bin/dsh.cmd'))
+        candidates.extend(root.glob('**/bin/dsh.exe'))
+    if not candidates:
+        return ''
+    try:
+        newest = max(candidates, key=lambda path: path.stat().st_mtime)
+    except OSError:
+        return ''
+    return str(newest)
+
+
 def app_tools_server():
     root = Path.home() / '.codex' / 'plugins' / 'cache' / 'openai-bundled' / 'codex-app-tools'
     paths = sorted(root.glob('*/server.mjs'), key=lambda p: p.stat().st_mtime, reverse=True)
@@ -89,11 +187,14 @@ def app_pipes():
     except OSError:
         names = []
     paths = [current] if current else []
-    for name in names:
-        if name.startswith('codex-browser-use-'):
-            path = '\\\\.\\pipe\\' + name
-            if path not in paths:
-                paths.append(path)
+    # Recent Desktop versions split app tools from browser automation. Prefer
+    # their dedicated pipe; keep the old prefix for older Desktop versions.
+    for prefix in ('codex-app-tools-', 'codex-browser-use-'):
+        for name in names:
+            if name.startswith(prefix):
+                path = '\\\\.\\pipe\\' + name
+                if path not in paths:
+                    paths.append(path)
     return paths
 
 
@@ -202,13 +303,16 @@ def validate_rule(raw):
     if not isinstance(raw, dict):
         raise ValueError('飞书规则必须是对象')
     rule = {key: raw.get(key) for key in ('id', 'name', 'enabled', 'chat_type', 'chat_id',
-             'sender_id', 'require_bot_mention', 'target_thread_id', 'prompt', 'message_types', 'ack_text', 'keyword')}
+             'sender_id', 'require_bot_mention', 'target_thread_id', 'target', 'dsh_session',
+             'prompt', 'message_types', 'ack_text', 'keyword')}
     rule['id'] = str(rule['id'] or uuid.uuid4().hex)
     rule['name'] = str(rule['name'] or '').strip()
     rule['chat_type'] = str(rule['chat_type'] or 'p2p')
     rule['chat_id'] = str(rule['chat_id'] or '').strip()
     rule['sender_id'] = str(rule['sender_id'] or '').strip()
+    rule['target'] = str(rule['target'] or 'codex').strip()
     rule['target_thread_id'] = str(rule['target_thread_id'] or '').strip()
+    rule['dsh_session'] = str(rule['dsh_session'] or '').strip()
     rule['prompt'] = str(rule['prompt'] or '').strip()
     rule['ack_text'] = str(rule['ack_text'] or '').strip()
     rule['keyword'] = str(rule['keyword'] or '').strip()
@@ -232,8 +336,15 @@ def validate_rule(raw):
         raise ValueError('发送者 open_id 无效')
     if rule['chat_type'] == 'p2p' and not rule['sender_id']:
         raise ValueError('私聊规则必须指定发送者 open_id')
-    if not THREAD_ID.fullmatch(rule['target_thread_id']):
-        raise ValueError('Codex 对话 ID 无效')
+    if rule['target'] not in TARGETS:
+        raise ValueError('规则目标只能是 Codex 对话或本地 DSH 会话')
+    if rule['target'] == 'codex':
+        if not THREAD_ID.fullmatch(rule['target_thread_id']):
+            raise ValueError('Codex 对话 ID 无效')
+        if rule['dsh_session']:
+            raise ValueError('Codex 目标不使用 DSH 会话 ID')
+    elif rule['dsh_session'] and not SESSION_ID.fullmatch(rule['dsh_session']):
+        raise ValueError('DSH 会话 ID 无效')
     if not rule['prompt'] or len(rule['prompt']) > 20000:
         raise ValueError('提示词应为 1–20000 字')
     if len(rule['ack_text']) > 200:
@@ -241,6 +352,33 @@ def validate_rule(raw):
     if len(rule['keyword']) > 200:
         raise ValueError('关键词不能超过 200 字')
     return rule
+
+
+def validate_dsh(raw):
+    value = {**DSH_DEFAULT, **(raw if isinstance(raw, dict) else {})}
+    for key in ('profile', 'app_id', 'bot_open_id', 'dsh_profile', 'command', 'workspace',
+                'default_session', 'ack_text', 'permission_mode'):
+        value[key] = str(value[key] or '').strip()
+    if value['dsh_profile'] and not re.fullmatch(r'[A-Za-z0-9_.-]{1,64}', value['dsh_profile']):
+        raise ValueError('DSH profile 名称无效')
+    if value['app_id'] and not re.fullmatch(r'cli_[A-Za-z0-9_-]+', value['app_id']):
+        raise ValueError('DSH 机器人 App ID 无效')
+    if value['bot_open_id'] and not USER_ID.fullmatch(value['bot_open_id']):
+        raise ValueError('DSH 机器人 open_id 无效')
+    if value['default_session'] and not SESSION_ID.fullmatch(value['default_session']):
+        raise ValueError('默认 DSH 会话 ID 无效')
+    if value['permission_mode'] not in ('read-only', 'workspace-write', 'danger-full-access'):
+        raise ValueError('DSH 权限模式无效')
+    if len(value['ack_text']) > 200:
+        raise ValueError('DSH 确认回复不能超过 200 字')
+    if not isinstance(value['enabled'], bool):
+        raise ValueError('DSH 路由开关必须为布尔值')
+    timeout = value['timeout_seconds']
+    if isinstance(timeout, bool) or not isinstance(timeout, int) or not 30 <= timeout <= 7200:
+        raise ValueError('DSH 回复等待时间应为 30–7200 秒')
+    if value['enabled'] and (not value['profile'] or not value['app_id']):
+        raise ValueError('启用 DSH 路由前请填写第二个机器人的 lark-cli 配置名与 App ID')
+    return {key: value[key] for key in DSH_DEFAULT}
 
 
 def validate_config(raw):
@@ -257,6 +395,7 @@ def validate_config(raw):
         raise ValueError('飞书 App ID 无效')
     if value['bot_open_id'] and not USER_ID.fullmatch(value['bot_open_id']):
         raise ValueError('机器人 open_id 无效')
+    value['dsh'] = validate_dsh(value.get('dsh'))
     if value['enabled'] and (not value['app_id'] or not value['bot_open_id']):
         raise ValueError('启用监听前请填写飞书 App ID 和机器人 open_id')
     if len(value['ack_text']) > 200:
@@ -267,19 +406,24 @@ def validate_config(raw):
     value['rules'] = [validate_rule(item) for item in rules]
     if len({item['id'] for item in value['rules']}) != len(value['rules']):
         raise ValueError('飞书规则 ID 重复')
-    if value['enabled'] and not any(item['enabled'] for item in value['rules']):
-        raise ValueError('启用监听前请至少启用一条规则')
+    if value['enabled'] and not any(item['enabled'] and item['target'] == 'codex' for item in value['rules']):
+        raise ValueError('启用 Codex 监听前请至少启用一条 Codex 规则')
+    if value['dsh']['enabled'] and not any(item['enabled'] and item['target'] == 'dsh' for item in value['rules']):
+        raise ValueError('启用 DSH 路由前请至少启用一条 DSH 规则')
     return {key: value[key] for key in DEFAULT}
 
 
-def matching_rule(event, config, *, allow_group_reply=False):
+def matching_rule(event, config, *, allow_group_reply=False, source='codex'):
     if event.get('type') != 'im.message.receive_v1' or event.get('sender_type') != 'user':
         return None
     if not MESSAGE_ID.fullmatch(str(event.get('message_id', ''))):
         return None
-    if event.get('sender_id') == config['bot_open_id']:
+    bot_open_id = config['dsh']['bot_open_id'] if source == 'dsh' else config['bot_open_id']
+    if event.get('sender_id') == bot_open_id:
         return None
     for rule in config['rules']:
+        if (rule['target'] == 'dsh') != (source == 'dsh'):
+            continue
         if not rule['enabled'] or event.get('chat_type') != rule['chat_type'] or event.get('chat_id') != rule['chat_id']:
             continue
         if rule['sender_id'] and event.get('sender_id') != rule['sender_id']:
@@ -289,7 +433,7 @@ def matching_rule(event, config, *, allow_group_reply=False):
         if rule['keyword'] and rule['keyword'].casefold() not in str(event.get('content', '')).casefold():
             continue
         if rule['require_bot_mention'] and not any(
-                isinstance(item, dict) and item.get('id') == config['bot_open_id']
+                isinstance(item, dict) and item.get('id') == bot_open_id
                 for item in (event.get('mentions') or [])):
             parent = FeishuBridge._parent_id(event)
             if not (allow_group_reply and rule['chat_type'] == 'group'
@@ -326,6 +470,27 @@ def render_prompt(rule, event, acknowledgement):
     )
 
 
+def render_dsh_prompt(rule, event, acknowledgement):
+    """Prompt handed to a local DSH session; its answer is posted back to Feishu."""
+    replacements = {'{rule_name}': rule['name'], '{chat_id}': event['chat_id'],
+                    '{message_id}': event['message_id'], '{sender_id}': event['sender_id'],
+                    '{acknowledgement}': acknowledgement or '无'}
+    prompt = rule['prompt']
+    for marker, value in replacements.items():
+        prompt = prompt.replace(marker, str(value))
+    context = ''
+    if event.get('context_source_message_id'):
+        context = (f"本条{'群聊' if rule['chat_type'] == 'group' else '私聊'}是回复消息。被回复的消息 ID："
+                   f"{event['context_source_message_id']}；必要时读取该消息理解上下文。\n")
+    return (
+        f"飞书监听规则“{rule['name']}”已匹配一条消息，由本机 DSH 会话处理。"
+        f"chat_id={event['chat_id']}；message_id={event['message_id']}；sender_id={event['sender_id']}。\n"
+        "工具箱会自动把你的回答发回原消息。请只输出要发回飞书的正文（中文优先、简短清楚），"
+        "不要包含思考过程、工具日志、本段说明或 Markdown 代码围栏；需要动手时先完成再汇报结论。\n\n"
+        + context + prompt
+    )
+
+
 class FeishuBridge:
     def __init__(self, app):
         self.app = app
@@ -339,6 +504,9 @@ class FeishuBridge:
         self.consumer = None
         self.consumer_thread = None
         self.consumer_stop = threading.Event()
+        self.consumers = {}
+        self.dsh_thread = None
+        self.dsh_connected = False
         self.worker_stop = threading.Event()
         self.closed = False
         self.workers = ThreadPoolExecutor(max_workers=4, thread_name_prefix='feishu-message')
@@ -354,9 +522,16 @@ class FeishuBridge:
                         'thread_id TEXT NOT NULL,created_at REAL NOT NULL,title TEXT NOT NULL,'
                         'targets TEXT NOT NULL,link TEXT NOT NULL,state TEXT NOT NULL,last_answer_id TEXT,'
                         'PRIMARY KEY (app_id,chat_id,message_id))')
+        self.db.execute('CREATE TABLE IF NOT EXISTS dsh_sessions ('
+                        'chat_id TEXT PRIMARY KEY, session_id TEXT NOT NULL, updated_at INTEGER NOT NULL)')
+        self.db.execute('CREATE TABLE IF NOT EXISTS dsh_outbound ('
+                        'message_id TEXT PRIMARY KEY, session_id TEXT NOT NULL, chat_id TEXT NOT NULL, '
+                        'created_at INTEGER NOT NULL)')
         columns = {row[1] for row in self.db.execute('PRAGMA table_info(jobs)')}
         if 'target_thread_id' not in columns:
             self.db.execute('ALTER TABLE jobs ADD COLUMN target_thread_id TEXT')
+        if 'target_kind' not in columns:
+            self.db.execute('ALTER TABLE jobs ADD COLUMN target_kind TEXT')
         self.db.commit()
         if self.config['enabled']:
             self.start()
@@ -371,7 +546,8 @@ class FeishuBridge:
             rows = self.db.execute('SELECT message_id,rule_id,status,reply_id,updated_at,detail,target_thread_id '
                                    'FROM jobs ORDER BY updated_at DESC LIMIT 20').fetchall()
             return {'config': json.loads(json.dumps(self.config, ensure_ascii=False)),
-                    'connected': self.connected, 'last_error': self.last_error,
+                    'connected': self.connected, 'dsh_connected': self.dsh_connected,
+                    'last_error': self.last_error,
                     'last_event_at': self.last_event_at,
                     'recent': [dict(zip(('message_id', 'rule_id', 'status', 'reply_id', 'updated_at', 'detail', 'target_thread_id'), row))
                                for row in rows]}
@@ -379,18 +555,21 @@ class FeishuBridge:
     def save(self, params):
         value = validate_config(params.get('config', params))
         with self.lock:
-            was_enabled = self.config['enabled']
             write_json(self.path, value)
             self.config = value
-        if was_enabled and not value['enabled']:
+            want_codex = value['enabled']
+            want_dsh = value['dsh']['enabled']
+        if not want_codex and not want_dsh:
             self._stop_consumer()
-        elif value['enabled'] and not self._running():
+        else:
+            self._stop_consumer()
             self.start()
         return self.status()
 
     def threads(self, _=None):
         with self.lock:
-            thread_id = next((rule['target_thread_id'] for rule in self.config['rules']), '')
+            thread_id = next((rule['target_thread_id'] for rule in self.config['rules']
+                              if rule['target'] == 'codex' and rule['target_thread_id']), '')
         thread_id = thread_id or os.environ.get('CODEX_THREAD_ID', '')
         if not thread_id:
             raise ValueError('请先在规则中填写一个已有的 Codex 对话 ID，再读取对话列表')
@@ -415,50 +594,70 @@ class FeishuBridge:
         lark_json('event', 'consume', 'im.message.receive_v1', '--as', 'bot', '--dry-run')
         with self.lock:
             config = dict(self.config)
-            threads = list({rule['target_thread_id'] for rule in self.config['rules'] if rule['enabled']})
+            threads = list({rule['target_thread_id'] for rule in self.config['rules']
+                            if rule['enabled'] and rule['target'] == 'codex'})
         if config['app_id']:
             verify_lark_app(config)
+        if config['dsh']['enabled'] or (config['dsh']['profile'] and config['dsh']['app_id']):
+            verify_dsh_app(config)
         if threads:
             client = connect_codex(threads[0])
             client.close()
         return {'ok': True, 'lark': 'ready', 'codex': 'ready' if threads else 'no_enabled_rule'}
 
-    def _running(self):
-        return self.consumer_thread is not None and self.consumer_thread.is_alive()
+    def _running(self, source='codex'):
+        thread = self.consumer_thread if source == 'codex' else self.dsh_thread
+        return thread is not None and thread.is_alive()
 
     def start(self):
-        if self._running():
-            return
-        self.consumer_stop = threading.Event()
-        self.consumer_thread = threading.Thread(target=self._consume_loop, args=(self.consumer_stop,),
-                                                name='feishu-bridge-consumer', daemon=True)
-        self.consumer_thread.start()
+        if not self._running('codex'):
+            self.consumer_stop = threading.Event()
+            self.consumer_thread = threading.Thread(target=self._consume_loop, args=(self.consumer_stop, 'codex'),
+                                                    name='feishu-bridge-consumer', daemon=True)
+            self.consumer_thread.start()
+        with self.lock:
+            dsh_enabled = self.config['dsh']['enabled']
+        if dsh_enabled and not self._running('dsh'):
+            self.dsh_thread = threading.Thread(target=self._consume_loop, args=(self.consumer_stop, 'dsh'),
+                                               name='feishu-bridge-dsh-consumer', daemon=True)
+            self.dsh_thread.start()
 
     def _stop_consumer(self):
         self.consumer_stop.set()
-        proc = self.consumer
-        if proc is not None and proc.poll() is None:
-            try:
-                proc.stdin.close()
-                proc.wait(timeout=5)
-            except (OSError, subprocess.TimeoutExpired):
-                proc.terminate()
-        if self.consumer_thread and self.consumer_thread is not threading.current_thread():
-            self.consumer_thread.join(timeout=5)
+        for proc in list(self.consumers.values()):
+            if proc is not None and proc.poll() is None:
+                try:
+                    proc.stdin.close()
+                    proc.wait(timeout=5)
+                except (OSError, subprocess.TimeoutExpired):
+                    proc.terminate()
+        for thread in (self.consumer_thread, self.dsh_thread):
+            if thread and thread is not threading.current_thread():
+                thread.join(timeout=5)
         self.connected = False
+        self.dsh_connected = False
 
-    def _consume_loop(self, stop):
+    def _consume_loop(self, stop, source='codex'):
+        name = 'DSH 路由' if source == 'dsh' else '飞书监听'
         while not stop.is_set():
             try:
                 with self.lock:
                     config = dict(self.config)
-                verify_lark_app(config)
-                proc = subprocess.Popen([executable('lark-cli.cmd'), 'event', 'consume',
-                                         'im.message.receive_v1', '--as', 'bot'],
-                                        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                        text=True, encoding='utf-8', bufsize=1, creationflags=NO_WINDOW)
+                if source == 'dsh':
+                    verify_dsh_app(config)
+                else:
+                    verify_lark_app(config)
+                argv = [executable('lark-cli.cmd')]
+                if source == 'dsh':
+                    argv += ['--profile', config['dsh']['profile']]
+                argv += ['event', 'consume', 'im.message.receive_v1', '--as', 'bot']
+                proc = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                        stderr=subprocess.PIPE, text=True, encoding='utf-8', bufsize=1,
+                                        creationflags=NO_WINDOW)
                 with self.lock:
-                    self.consumer = proc
+                    self.consumers[source] = proc
+                    if source == 'codex':
+                        self.consumer = proc
                 ready = threading.Event()
 
                 def stderr_reader():
@@ -467,11 +666,14 @@ class FeishuBridge:
                         if '[event] ready event_key=im.message.receive_v1' in line:
                             ready.set()
                             with self.lock:
-                                self.connected = True
+                                if source == 'dsh':
+                                    self.dsh_connected = True
+                                else:
+                                    self.connected = True
                                 self.last_error = ''
-                            self.app.emit('feishu.bridge.status', connected=True)
+                            self.app.emit('feishu.bridge.status', connected=True, source=source)
                         elif line and ('WARN' in line or 'ERROR' in line or 'error' in line.lower()):
-                            LOG.warning('飞书监听：%s', line[:500])
+                            LOG.warning('%s：%s', name, line[:500])
                 threading.Thread(target=stderr_reader, daemon=True).start()
                 for line in proc.stdout:
                     if stop.is_set():
@@ -482,20 +684,27 @@ class FeishuBridge:
                         LOG.warning('飞书事件不是 JSON')
                         continue
                     if ready.is_set():
-                        self._accept(event)
+                        self._accept(event, source)
                 if stop.is_set():
                     break
-                raise RuntimeError(f'飞书监听进程已退出（{proc.wait()}）')
+                raise RuntimeError(f'{name}进程已退出（{proc.wait()}）')
             except Exception as exc:
                 with self.lock:
-                    self.connected = False
+                    if source == 'dsh':
+                        self.dsh_connected = False
+                    else:
+                        self.connected = False
                     self.last_error = str(exc)
-                LOG.exception('飞书监听中断')
-                self.app.emit('feishu.bridge.status', connected=False, error=str(exc))
+                LOG.exception('%s中断', name)
+                self.app.emit('feishu.bridge.status', connected=False, error=str(exc), source=source)
                 stop.wait(5)
         with self.lock:
-            self.connected = False
-            self.consumer = None
+            self.consumers.pop(source, None)
+            if source == 'dsh':
+                self.dsh_connected = False
+            else:
+                self.connected = False
+                self.consumer = None
 
     def _claim(self, message_id, rule_id):
         with self.lock:
@@ -514,22 +723,24 @@ class FeishuBridge:
             self.db.commit()
         self.app.emit('feishu.bridge.job', message_id=message_id, status=status, reply_id=reply_id)
 
-    def _accept(self, event):
+    def _accept(self, event, source='codex'):
         with self.lock:
-            rule = matching_rule(event, self.config, allow_group_reply=True)
+            rule = matching_rule(event, self.config, allow_group_reply=True, source=source)
             if not rule or not self._claim(event['message_id'], rule['id']):
                 return
             rule = dict(rule)
             config = dict(self.config)
             self.last_event_at = int(time.time())
+        bot_open_id = config['dsh']['bot_open_id'] if source == 'dsh' else config['bot_open_id']
         implicit = rule['chat_type'] == 'group' and rule['require_bot_mention'] and not any(
-            isinstance(item, dict) and item.get('id') == config['bot_open_id']
+            isinstance(item, dict) and item.get('id') == bot_open_id
             for item in (event.get('mentions') or []))
-        self.workers.submit(self._process_safe, {**event, '_implicit_group_reply': implicit}, rule, config, '')
+        self.workers.submit(self._process_safe, {**event, '_implicit_group_reply': implicit}, rule, config, '',
+                            source)
 
-    def _process_safe(self, event, rule, config, ack_id):
+    def _process_safe(self, event, rule, config, ack_id, source='codex'):
         try:
-            self._process(event, rule, config, ack_id)
+            self._process(event, rule, config, ack_id, source)
         except Exception as exc:
             LOG.exception('飞书消息处理失败：%s', event.get('message_id'))
             self._finish(event['message_id'], 'failed', detail=str(exc))
@@ -731,7 +942,9 @@ class FeishuBridge:
                 return source, original_parent
         raise RuntimeError('找不到被回复消息的来源 context；请直接发送新消息使用默认 context')
 
-    def _process(self, event, rule, config, ack_id=''):
+    def _process(self, event, rule, config, ack_id='', source='codex'):
+        if rule['target'] == 'dsh':
+            return self._process_dsh(event, rule, config, source)
         message_id = event['message_id']
         try:
             answer = lark_json('im', '+messages-mget', '--as', 'bot', '--message-ids', message_id,
@@ -812,6 +1025,184 @@ class FeishuBridge:
             self.worker_stop.wait(5)
         self._finish(message_id, 'unconfirmed', detail='等待最终回复超时或工具箱正在退出')
 
+    def _dsh_session(self, chat_id):
+        with self.lock:
+            row = self.db.execute('SELECT session_id FROM dsh_sessions WHERE chat_id=?', (chat_id,)).fetchone()
+        return row[0] if row else ''
+
+    def _dsh_session_of_message(self, message_id):
+        """Session that sent this bot message, recorded via feishu.bridge.route."""
+        if not MESSAGE_ID.fullmatch(str(message_id or '')):
+            return ''
+        with self.lock:
+            row = self.db.execute('SELECT session_id FROM dsh_outbound WHERE message_id=?',
+                                  (message_id,)).fetchone()
+        return row[0] if row else ''
+
+    def _dsh_session_for_reply(self, message, event):
+        """Walk the reply chain so an answer continues the conversation that asked."""
+        seen = set()
+        parent = self._parent_id(message) or self._parent_id(event)
+        for _ in range(5):
+            if not MESSAGE_ID.fullmatch(str(parent or '')) or parent in seen:
+                return ''
+            seen.add(parent)
+            session_id = self._dsh_session_of_message(parent)
+            if session_id:
+                return session_id
+            try:
+                parent_message = lark_json('im', '+messages-mget', '--as', 'bot', '--message-ids', parent,
+                                           '--no-reactions', '--format', 'json',
+                                           profile=self.config['dsh']['profile'])
+                parent_message = next((m for m in parent_message.get('data', {}).get('messages', [])
+                                       if m.get('message_id') == parent), None)
+            except Exception:
+                return ''
+            if not parent_message:
+                return ''
+            parent = self._parent_id(parent_message)
+        return ''
+
+    def route_message(self, params):
+        """Record which DSH session sent a bot message (called after a send)."""
+        message_id = str((params or {}).get('message_id') or '').strip()
+        session_id = str((params or {}).get('session_id') or '').strip()
+        chat_id = str((params or {}).get('chat_id') or '').strip()
+        if not MESSAGE_ID.fullmatch(message_id):
+            raise ValueError('消息 ID 无效')
+        if not SESSION_ID.fullmatch(session_id):
+            raise ValueError('DSH 会话 ID 无效')
+        if chat_id and not CHAT_ID.fullmatch(chat_id):
+            raise ValueError('chat_id 无效')
+        with self.lock:
+            self.db.execute('INSERT INTO dsh_outbound (message_id,session_id,chat_id,created_at) VALUES (?,?,?,?) '
+                            'ON CONFLICT(message_id) DO UPDATE SET session_id=excluded.session_id, '
+                            'chat_id=excluded.chat_id, created_at=excluded.created_at',
+                            (message_id, session_id, chat_id, int(time.time())))
+            if chat_id:
+                self.db.execute('INSERT INTO dsh_sessions (chat_id,session_id,updated_at) VALUES (?,?,?) '
+                                'ON CONFLICT(chat_id) DO UPDATE SET session_id=excluded.session_id, '
+                                'updated_at=excluded.updated_at',
+                                (chat_id, session_id, int(time.time())))
+            self.db.commit()
+        return {'ok': True, 'message_id': message_id, 'session_id': session_id, 'chat_id': chat_id}
+
+    def _set_dsh_session(self, chat_id, session_id):
+        if not SESSION_ID.fullmatch(str(session_id or '')):
+            return
+        with self.lock:
+            self.db.execute('INSERT INTO dsh_sessions (chat_id,session_id,updated_at) VALUES (?,?,?) '
+                            'ON CONFLICT(chat_id) DO UPDATE SET session_id=excluded.session_id, '
+                            'updated_at=excluded.updated_at',
+                            (chat_id, session_id, int(time.time())))
+            self.db.commit()
+
+    def _run_dsh(self, task, session_id, config):
+        """Run one local DSH turn; returns {'ok', 'session', 'answer'| 'error'}."""
+        settings = config['dsh']
+        argv = [dsh_command(config), '--profile', settings['dsh_profile'], '--json']
+        if session_id:
+            argv += ['--session-id', session_id]
+        argv.append(task)
+        env = os.environ.copy()
+        env['DSH_PERMISSION_MODE'] = settings['permission_mode']
+        try:
+            proc = subprocess.run(argv, cwd=settings['workspace'] or None, env=env,
+                                  capture_output=True, text=True, encoding='utf-8',
+                                  timeout=settings['timeout_seconds'], creationflags=NO_WINDOW)
+        except subprocess.TimeoutExpired:
+            return {'ok': False, 'error': 'DSH 会话超时'}
+        except OSError as exc:
+            return {'ok': False, 'error': f'无法启动 DSH：{exc}'}
+        session, final = None, None
+        for line in (proc.stdout or '').splitlines():
+            line = line.strip()
+            if not line.startswith('{'):
+                continue
+            try:
+                payload = json.loads(line)
+            except ValueError:
+                continue
+            if payload.get('type') == 'session':
+                session = payload.get('sessionId')
+            elif payload.get('type') == 'final':
+                final = payload.get('text')
+        if final is None:
+            detail = (proc.stderr or proc.stdout or '').strip()[-300:]
+            return {'ok': False, 'session': session, 'error': detail or f'DSH 退出码 {proc.returncode}'}
+        return {'ok': True, 'session': session, 'answer': final.strip()}
+
+    def _process_dsh(self, event, rule, config, source='dsh'):
+        """Answer a Feishu message with a local DSH session and post the reply back."""
+        settings = config['dsh']
+        profile = settings['profile']
+        message_id = event['message_id']
+        try:
+            answer = lark_json('im', '+messages-mget', '--as', 'bot', '--message-ids', message_id,
+                               '--no-reactions', '--format', 'json', profile=profile)
+            message = next((m for m in answer.get('data', {}).get('messages', [])
+                            if m.get('message_id') == message_id), None)
+            sender = (message or {}).get('sender') or {}
+            if not message or message.get('chat_id') != rule['chat_id'] or sender.get('id') != event['sender_id'] \
+                    or sender.get('sender_type') != 'user':
+                raise RuntimeError('原消息的会话或发送者与飞书事件不一致')
+            if not str(message.get('content', '')).strip():
+                raise RuntimeError('原消息内容为空')
+            ack = rule['ack_text'] or settings['ack_text']
+            ack_id = ''
+            if ack:
+                try:
+                    acknowledgement = lark_json('im', '+messages-reply', '--as', 'bot', '--message-id', message_id,
+                                                '--text', ack, '--idempotency-key', message_id + ':thinking',
+                                                '--format', 'json', profile=profile)
+                    ack_id = acknowledgement.get('data', {}).get('message_id', '')
+                except Exception:
+                    LOG.exception('DSH 确认回复失败，继续处理 %s', message_id)
+            with self.lock:
+                self.db.execute('UPDATE jobs SET target_kind=? WHERE message_id=?', ('dsh', message_id))
+                self.db.commit()
+            session_id = (rule['dsh_session']
+                          or self._dsh_session_for_reply(message, event)
+                          or self._dsh_session(rule['chat_id'])
+                          or settings['default_session'])
+            result = self._run_dsh(render_dsh_prompt(rule, event, ack_id), session_id, config)
+            if result.get('session'):
+                self._set_dsh_session(rule['chat_id'], result['session'])
+            if not result.get('ok'):
+                raise RuntimeError(result.get('error') or 'DSH 会话失败')
+            text = (result.get('answer') or '').strip() or '（DSH 没有返回内容）'
+            if len(text) > 4000:
+                text = text[:4000] + '\n…（内容过长已截断）'
+            sent = lark_json('im', '+messages-reply', '--as', 'bot', '--message-id', message_id,
+                             '--markdown', text, '--idempotency-key', message_id + ':answer',
+                             '--format', 'json', profile=profile)
+            reply_id = sent.get('data', {}).get('message_id', '')
+            if not MESSAGE_ID.fullmatch(reply_id):
+                raise RuntimeError('DSH 回复没有返回有效消息 ID')
+            if result.get('session'):
+                # Remember who answered, so a reply to this answer continues the same session.
+                with self.lock:
+                    self.db.execute('INSERT INTO dsh_outbound (message_id,session_id,chat_id,created_at) '
+                                    'VALUES (?,?,?,?) ON CONFLICT(message_id) DO UPDATE SET '
+                                    'session_id=excluded.session_id, chat_id=excluded.chat_id',
+                                    (reply_id, result['session'], rule['chat_id'], int(time.time())))
+                    self.db.commit()
+            self._finish(message_id, 'sent', reply_id)
+            return
+        except Exception as exc:
+            LOG.exception('DSH 处理失败：%s', message_id)
+            self._finish(message_id, 'failed', detail=str(exc))
+            self._blocked_dsh(message_id, config, str(exc))
+
+    def _blocked_dsh(self, message_id, config, reason):
+        try:
+            lark_json('im', '+messages-reply', '--as', 'bot', '--message-id', message_id,
+                      '--markdown', f'大肥鱼执行失败：{reason[:300]}。请在工具箱的飞书监听设置中检查 DSH 路由状态。',
+                      '--idempotency-key', message_id + ':blocked', '--format', 'json',
+                      profile=config['dsh']['profile'])
+        except Exception:
+            LOG.exception('DSH 阻塞提示未能送达：%s', message_id)
+
     def _blocked(self, message_id, reason):
         try:
             lark_json('im', '+messages-reply', '--as', 'bot', '--message-id', message_id,
@@ -839,3 +1230,4 @@ def register(app):
     app.register('feishu.bridge.save', service.save)
     app.register('feishu.bridge.check', service.check)
     app.register('feishu.bridge.threads', service.threads)
+    app.register('feishu.bridge.route', service.route_message)

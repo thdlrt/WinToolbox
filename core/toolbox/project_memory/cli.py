@@ -9,6 +9,7 @@ import uuid
 from pathlib import Path
 
 from .store import MemoryStore, state_directory
+from .governance import recall_rows, sweep_rows
 
 
 def exchange(store, request):
@@ -69,8 +70,13 @@ def parser():
     recall.add_argument("--query", default="")
     recall.add_argument("--limit", type=int, default=10)
     recall.add_argument("--max-chars", type=int, default=12000)
+    recall.add_argument("--include-candidates", action="store_true", help="显式查候选；仍排除退役、拒绝、归档和冲突")
     read = commands.add_parser("read")
     read.add_argument("id")
+    read.add_argument("--current", action="store_true", help="省略重复历史正文；冲突处理仍需完整 read")
+    sweep = commands.add_parser("sweep", help="只读检查本项目知识；不自动删除、改写或调用模型")
+    sweep.add_argument("--project", required=True)
+    sweep.add_argument("--checkpoint", help="本地增量检查点；不写知识数据库")
     capture = commands.add_parser("capture")
     capture.add_argument("--project")
     capture.add_argument("--title")
@@ -138,23 +144,16 @@ def run(store, args):
         return {"project": project, "location": location, "principles": principles, **store.info()}
     if command == "recall":
         pid = project_id(store, args.project)
-        rows = store.entries(query=args.query)
-        rows = [row for row in rows if not row.get("internal") and not row.get("archived") and row.get("promotion", {}).get("state") not in ("candidate", "rejected")
-                and (pid is None or row.get("project_id") == pid or row.get("scope") == "global")]
-        rows.sort(key=lambda row: (0 if pid and row.get("project_id") == pid else 1, row["title"], row["id"]))
-        selected = []
-        remaining = max(0, args.max_chars)
-        for row in rows[:max(0, args.limit)]:
-            row = dict(row)
-            row.pop("versions", None)
-            row["body"] = row["body"][:remaining]
-            remaining -= len(row["body"])
-            selected.append(row)
-            if remaining <= 0:
-                break
-        return {"entries": selected, "total": len(rows)}
+        return recall_rows(store.entries(), pid, args.query, args.limit, args.max_chars, args.include_candidates)
     if command == "read":
-        return store.get_entry(args.id)
+        row = store.get_entry(args.id)
+        if args.current:
+            row.pop('versions', None)
+        return row
+    if command == "sweep":
+        pid = project_id(store, args.project)
+        store.get_project(pid)
+        return sweep_rows(store.entries(project_id=pid, include_done=True), store.library_id, pid, args.checkpoint)
     if command == "capture":
         incoming = {}
         if args.input:

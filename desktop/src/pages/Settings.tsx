@@ -10,8 +10,8 @@ import QuickSettings from './QuickSettings';
 import '../quickMenu.css';
 import { localRoleModels, modelPresetPatch, type ModelPreset } from '../modelRoles';
 
-const roleNames: Record<string, string> = { transcribe: '文件转写', live_asr: '实时识别', translate: '翻译', quick_translate: '快捷菜单翻译', chat: '总结与问答', vision: '图表理解', embedding: '资料库索引', tts: '语音合成' };
-const roleHints: Record<string, string> = { transcribe: '音视频文件的语音识别', live_asr: '实时会话流式识别', translate: '字幕翻译', quick_translate: '长按选区的单词释义与段落翻译；默认阿里云 Qwen3.8-Flash', chat: '内容总结与实时问答', vision: '资料库扫描页、表格与图表', embedding: '预先建立资料库索引，供实时问答检索', tts: 'API 配音与声音合成' };
+const roleNames: Record<string, string> = { transcribe: '文件转写', live_asr: '实时识别', translate: '翻译', quick_translate: '快捷菜单翻译', chat: '总结与问答', vision: '图表理解', expense_import: 'AI记账', embedding: '资料库索引', tts: '语音合成' };
+const roleHints: Record<string, string> = { transcribe: '音视频文件的语音识别', live_asr: '实时会话流式识别', translate: '字幕翻译', quick_translate: '长按选区的单词释义与段落翻译；默认阿里云 Qwen3.8-Flash', chat: '内容总结与实时问答', vision: '资料库扫描页、表格与图表', expense_import: '票据、图片与文字提取记账草稿；请选择支持图片的模型', embedding: '预先建立资料库索引，供实时问答检索', tts: 'API 配音与声音合成' };
 const defaultUrls = { openai: 'https://api.openai.com/v1', dashscope: 'https://dashscope.aliyuncs.com/compatible-mode/v1', gemini: 'https://generativelanguage.googleapis.com/v1beta' };
 
 export default function SettingsPage() {

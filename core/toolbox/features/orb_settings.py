@@ -4,7 +4,7 @@ import threading
 from ..settings import atomic_json
 
 DEFAULT_ACTIONS = ['clean', 'relay', 'subtitle-toggle', 'home']
-ALLOWED_ACTIONS = frozenset(DEFAULT_ACTIONS + ['ram', 'captions', 'filesync', 'memory', 'media', 'live', 'practice', 'phonetics', 'expenses', 'shizuku', 'fnconnect', 'gpu', 'codex', 'files', 'scripts', 'plugins', 'settings'])
+ALLOWED_ACTIONS = frozenset(DEFAULT_ACTIONS + ['ram', 'captions', 'filesync', 'memory', 'media', 'live', 'practice', 'phonetics', 'expenses', 'fnconnect', 'gpu', 'codex', 'files', 'scripts', 'plugins', 'settings'])
 
 
 class OrbSettings:
@@ -20,7 +20,7 @@ class OrbSettings:
                 value = json.loads(self.path.read_text('utf-8'))
                 auto_hide = value.get('oled_auto_hide', True) is not False
                 actions = value.get('actions')
-                if isinstance(actions, list): actions = list(dict.fromkeys('scripts' if a == 'files' else a for a in actions))
+                if isinstance(actions, list): actions = list(dict.fromkeys('scripts' if a == 'files' else a for a in actions if a != 'shizuku'))
                 self.validate(actions)
             except (OSError, ValueError, TypeError, AttributeError): actions = DEFAULT_ACTIONS.copy()
             return {'actions': actions, 'oled_auto_hide': auto_hide}

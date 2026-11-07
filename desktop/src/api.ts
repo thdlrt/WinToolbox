@@ -61,6 +61,8 @@ export interface Artifact { path: string; kind?: string; label?: string; name?: 
 export interface Job {
   id: string; tool: string; status: string; progress: number; message?: string; created_at: string;
   params: Record<string, unknown>; artifacts: Artifact[]; error?: string | Record<string, unknown>;
+  updated_at?: string;
+  transfer?: { received_bytes: number; total_bytes: number; bytes_per_second: number; file_name: string; file_index: number; file_count: number; phase: 'downloading' | 'verifying' };
 }
 export interface Collection { id: string; name: string; prompt?: string; document_count?: number; index_ready?: boolean; index_status?: string }
 export interface Citation { path?: string; page?: number; text?: string; title?: string; name?: string; document?: string; source?: string; [key: string]: unknown }

@@ -2,11 +2,26 @@
 
 在「Codex 配置 → 飞书监听」管理。监听器随 WinToolbox 后端运行；工具箱主窗口关闭到托盘后继续监听，彻底退出后停止。需要重启电脑后自动监听时，在「设置 → 通用」开启工具箱开机启动。
 
-配置包含飞书 App ID、机器人 open_id、默认确认回复、最终回复等待时间及多条匹配规则。每条规则可设置私聊或群聊、chat_id、发送者 open_id、是否必须 @机器人、消息关键词、接收的消息类型、目标本机 Codex 对话和任务提示词。私聊必须指定发送者，避免其他人通过机器人取得该对话的权限。按配置顺序匹配第一条规则。修改后点击「保存配置」即生效；「检查连接」验证飞书 CLI 和 Codex 桌面接口，不发送测试消息。
+配置包含飞书 App ID、机器人 open_id、默认确认回复、最终回复等待时间及多条匹配规则。每条规则可设置私聊或群聊、chat_id、发送者 open_id、是否必须 @机器人、消息关键词、接收的消息类型、**处理目标**和任务提示词。处理目标为 `Codex 对话`（默认，沿用原有行为）或 `本地 DSH 会话`；一条规则只匹配它所属目标的机器人，两个目标互不串线。私聊必须指定发送者，避免其他人通过机器人取得该对话的权限。按配置顺序匹配第一条规则。修改后点击「保存配置」即生效；「检查连接」验证飞书 CLI、Codex 桌面接口与 DSH 路由，不发送测试消息。
 
-提示词支持 `{rule_name}`、`{chat_id}`、`{message_id}`、`{sender_id}`、`{acknowledgement}`。监听器会追加身份复核及回复原消息的要求。对应 Codex 对话沿用自身的权限和上下文；规则的提示词应明确说明可执行范围。消息去重状态保存在 `feishu-bridge.sqlite3`，配置在 `feishu-bridge.json`，均位于便携版 `data` 目录，未加入自动数据同步或普通配置备份。
+提示词支持 `{rule_name}`、`{chat_id}`、`{message_id}`、`{sender_id}`、`{acknowledgement}`。Codex 目标会追加身份复核及回复原消息的要求；DSH 目标会追加"只输出要发回飞书的正文"的要求，回答由工具箱代发。对应 Codex 对话沿用自身的权限和上下文；规则的提示词应明确说明可执行范围。消息去重状态保存在 `feishu-bridge.sqlite3`，配置在 `feishu-bridge.json`，均位于便携版 `data` 目录，未加入自动数据同步或普通配置备份。
 
-工具箱使用本机已有的 `lark-cli` 认证和 Codex Desktop app tools。未配置或未安装时显示实际错误。默认不启用任何规则，也不会自动导入其他脚本的授权。迁移旧监听器时，先保存并检查新配置，停止旧计划任务，再开启新监听，避免重复确认和派发。
+## 本地 DSH 路由
+
+第二个机器人（独立的 `lark-cli` 应用配置，例如 `lark-cli config init --name dafeiyu …`）的消息可以交给本机 DSH 处理，与 Codex 通道并存：
+
+- 「本地 DSH 路由」需要填写 lark-cli 配置名、机器人 App ID、可选机器人 open_id、DSH profile（默认 `headless`）、默认 DSH 会话 ID、权限模式、工作目录、回答等待时间与默认思考中回复；`dsh 命令`留空时先查 PATH，再在 DSH 的 `host-commands` 安装目录里自动查找。
+- 工具箱为每个开启的目标各起一个 `lark-cli event consume`；两个应用使用各自的长连接与事件总线，互不影响。
+- 每个飞书会话（chat_id）对应一个持久 DSH 会话，消息在该会话里继续；没有专属映射的会话使用默认会话（首个会话自动成为默认会话）。
+- 回复路由：用户回复某条机器人消息时，按「规则里写死的会话 → 被回复消息登记过的会话（沿回复链向上最多 5 层）→ 该 chat 最近使用的会话 → 默认会话」选择。桥自己发出的回答也会登记，所以再回复那条回答仍回同一会话。
+- 其他 DSH 会话主动通过这两个机器人发消息时，发送后运行一次 `python scripts/feishu_route.py --message-id <data.message_id> --chat-id <chat_id>`（省略会话 ID 时取 `DSH_SESSION_ID`），或用 RPC `feishu.bridge.route`，即可让用户的回复回到该会话。
+- 已知限制：一次性 runner 只能接手 headless 会话；DSH 桌面窗口里的普通对话（agent preset `standard`）无法被接手，执行时会报 `runs under agent preset "standard", which the one-shot runner does not compose`，桥会回复失败说明。这类对话需要自己回复用户。
+- 处理流程：先发「思考中」确认（可留空关闭），再用 `dsh --profile <DSH profile> --json [--session-id …]` 运行一轮，最后把 `final` 文本以 bot 身份回复原消息；失败会回复简短说明并记入「最近处理」。
+- 与 Codex 目标一样，只有原消息的 chat_id、发送者与飞书事件一致时才处理，回复使用 `--idempotency-key <message_id>:answer`。
+
+工具箱使用本机已有的 `lark-cli` 认证、DSH CLI 和 Codex Desktop app tools。未配置或未安装时显示实际错误。默认不启用任何规则，也不会自动导入其他脚本的授权。迁移旧监听器时，先保存并检查新配置，停止旧计划任务，再开启新监听，避免重复确认和派发。
+
+Codex 连接会优先识别新版 `codex-app-tools-*` 桌面管道，并保留旧版管道兼容；从资源管理器独立启动工具箱时无需继承 Codex 的环境变量。需要启动 Codex 而 PATH 中没有 `codex.exe` 时，会查找桌面版安装目录和 npm 原生 CLI；依赖缺失提示会区分 Codex、Node.js 与飞书 CLI。
 
 ## 私聊与群聊 context 路由
 

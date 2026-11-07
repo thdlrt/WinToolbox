@@ -26,6 +26,22 @@ def test_wrapped_success_and_projected_receipts(tmp_path):
     assert sent_in_rollout(path, THREAD, 'om_sent', 'oc_chat')
 
 
+def test_node_repl_execfile_receipt_recovers_source(tmp_path):
+    command = (
+        "text(await tools.mcp__node_repl__js({code:\""
+        "cp.execFile('C:/npm/lark-cli.exe',"
+        "['im','+messages-send','--as','bot','--chat-id','oc_chat'])"
+        "\"}))"
+    )
+    stdout = json.dumps({'ok': True, 'data': {'message_id': 'om_sent'}})
+    inspected = "{\n  error: undefined,\n  stdout: " + repr(stdout) + ",\n  stderr: ''\n}"
+    receipt = [{'type': 'input_text', 'text': json.dumps({
+        'content': [{'type': 'text', 'text': inspected}], 'isError': False,
+    })}]
+    path = rollout(tmp_path / 'rollout.jsonl', command=command, receipt=receipt)
+    assert sent_in_rollout(path, THREAD, 'om_sent', 'oc_chat')
+
+
 def test_yielded_exec_receipt_is_matched_to_its_wait(tmp_path):
     path = rollout(tmp_path / 'rollout.jsonl', receipt='Script running with cell ID 123')
     with path.open('a', encoding='utf-8') as stream:
@@ -42,6 +58,7 @@ def test_yielded_exec_receipt_is_matched_to_its_wait(tmp_path):
 @pytest.mark.parametrize('kwargs', [
     {'command': 'lark-cli im +messages-mget --as bot --message-ids om_sent'},
     {'command': 'lark-cli im +messages-send --as bot --chat-id oc_other --text hi'},
+    {'command': "cp.execFile('lark-cli.exe',['im','+messages-send','--as','user','--chat-id','oc_chat'])"},
     {'command': 'lark-cli im +messages-send --as bot --chat-id oc_chat --dry-run'},
     {'receipt': {'ok': False, 'data': {'message_id': 'om_sent'}}},
     {'output_kind': 'message'},

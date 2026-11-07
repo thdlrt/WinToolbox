@@ -42,6 +42,18 @@ def test_default_result_does_not_mutate_defaults(tmp_path):
     assert service.get()['actions'] == ['clean', 'relay', 'subtitle-toggle', 'home']
 
 
+@pytest.mark.parametrize('actions, expected', [
+    (['relay', 'shizuku', 'clean'], ['relay', 'clean']),
+    (['shizuku'], DEFAULT_ACTIONS),
+])
+def test_retired_shizuku_preserves_other_shortcuts(tmp_path, actions, expected):
+    service, _ = make_service(tmp_path)
+    service.path.write_text(json.dumps({'actions': actions, 'oled_auto_hide': False}), encoding='utf-8')
+    assert service.get() == {'actions': expected, 'oled_auto_hide': False}
+    with pytest.raises(ValueError):
+        service.save({'actions': ['shizuku']})
+
+
 def test_oled_preference_preserves_existing_shortcut_clients(tmp_path):
     service, _ = make_service(tmp_path)
     service.save({'actions':['home'],'oled_auto_hide':False})

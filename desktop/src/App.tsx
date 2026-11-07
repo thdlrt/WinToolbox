@@ -7,6 +7,7 @@ import { migratedUiPreferences, validFavorites, validTheme } from './uiPreferenc
 import { moveSidebarItem } from './sidebarOrder';
 import DataSyncIndicator from './DataSyncIndicator';
 import { visiblePolling } from './visiblePolling';
+const AiQuotaPage = lazy(() => import('./pages/AiQuota'));
 const ClipboardPage = lazy(() => import('./pages/Clipboard'));
 const HomePage = lazy(() => import('./pages/Home'));
 const OrbSettingsPage = lazy(() => import('./pages/OrbSettings'));
@@ -16,6 +17,7 @@ const MediaPage = lazy(() => import('./pages/Media'));
 const NetEasePage = lazy(() => import('./pages/NetEase'));
 const LivePage = lazy(() => import('./pages/Live'));
 const CodexPage = lazy(() => import('./pages/Codex'));
+const ScriptToolsPage = lazy(() => import('./pages/ScriptTools'));
 const QuickScriptsPage = lazy(() => import('./pages/QuickScripts'));
 const FileSyncPage = lazy(() => import('./pages/FileSync'));
 const RelayPage = lazy(() => import('./pages/Relay'));
@@ -29,12 +31,14 @@ const PracticePage = lazy(() => import('./pages/Practice'));
 const PhoneticsPage = lazy(() => import('./pages/Phonetics'));
 const ExpensesPage = lazy(() => import('./pages/Expenses'));
 const NetworkPage = lazy(() => import('./pages/Network'));
-const ShizukuPage = lazy(() => import('./pages/Shizuku'));
 const FnConnectPage = lazy(() => import('./pages/FnConnect'));
 const GpuGuardPage = lazy(() => import('./pages/GpuGuard'));
+const NetMountPage = lazy(() => import('./pages/NetMount'));
+const StackChanPage = lazy(() => import('./pages/StackChan'));
 const ProjectMemoryPage = lazy(() => import('./pages/ProjectMemory'));
 
 const nav: { id: Page; name: string; icon: typeof House }[] = [
+  { id: 'ai-quota', name: 'AI 聚合', icon: toolIcons['ai-quota'] },
   { id: 'clipboard', name: '剪贴板历史', icon: toolIcons['clipboard'] },
   { id: 'orb-settings', name: '悬浮球设置', icon: toolIcons['orb-settings'] },
   { id: 'ram', name: '内存清理', icon: toolIcons['ram'] },
@@ -48,10 +52,12 @@ const nav: { id: Page; name: string; icon: typeof House }[] = [
   { id: 'practice', name: '口语练习', icon: toolIcons['practice'] },
   { id: 'expenses', name: '记账', icon: toolIcons['expenses'] },
   { id: 'network', name: '网络诊断', icon: toolIcons['network'] },
-  { id: 'shizuku', name: 'Shizuku', icon: toolIcons['shizuku'] },
   { id: 'fnconnect', name: 'FN 远程访问', icon: toolIcons['fnconnect'] },
   { id: 'gpu', name: '独显省电守卫', icon: toolIcons['gpu'] },
+  { id: 'netmount', name: '硬盘挂载', icon: toolIcons['netmount'] },
+  { id: 'stackchan', name: '桌面机器人', icon: toolIcons['stackchan'] },
   { id: 'codex', name: 'Codex 配置', icon: toolIcons['codex'] },
+  { id: 'script-tools', name: '脚本工具', icon: toolIcons['script-tools'] },
   { id: 'scripts', name: '快捷脚本', icon: toolIcons['scripts'] }, { id: 'plugins', name: '扩展工具', icon: toolIcons['plugins'] },
   { id: 'settings', name: '设置', icon: toolIcons['settings'] },
 ];
@@ -183,14 +189,14 @@ export default function App() {
   useEffect(() => {
     if (!isDesktop()) return;
     let disposed = false; let off: (() => void) | undefined;
-    void listen<{ page: string }>('tool-open', e => { if (e.payload.page === 'quick-settings') { sessionStorage.setItem('wintoolbox-settings-tab', 'quick'); navigate('settings'); window.dispatchEvent(new Event('quick-settings-open')); return; } if (e.payload.page === 'files') { navigate('scripts'); return; } if (['clipboard', 'home', 'relay', 'captions', 'settings', 'ram', 'orb-settings', 'filesync', 'memory', 'media', 'netease', 'live', 'practice', 'phonetics', 'expenses', 'network', 'shizuku', 'fnconnect', 'gpu', 'codex', 'scripts', 'plugins'].includes(e.payload.page)) navigate(e.payload.page as Page); }).then(fn => { if (disposed) fn(); else off = fn; }).catch(error);
+    void listen<{ page: string }>('tool-open', e => { if (e.payload.page === 'quick-settings') { sessionStorage.setItem('wintoolbox-settings-tab', 'quick'); navigate('settings'); window.dispatchEvent(new Event('quick-settings-open')); return; } if (e.payload.page === 'files') { navigate('scripts'); return; } if (['ai-quota', 'clipboard', 'home', 'relay', 'captions', 'settings', 'ram', 'orb-settings', 'filesync', 'memory', 'media', 'netease', 'live', 'practice', 'phonetics', 'expenses', 'network', 'fnconnect', 'gpu', 'netmount', 'stackchan', 'codex', 'script-tools', 'scripts', 'plugins'].includes(e.payload.page)) navigate(e.payload.page as Page); }).then(fn => { if (disposed) fn(); else off = fn; }).catch(error);
     return () => { disposed = true; off?.(); };
   }, [navigate]);
 
   const value = useMemo(() => ({ page, navigate, setBeforeNavigate, connected, info, settings, jobs, theme, setTheme, pinnedTools, togglePinnedTool, refresh, refreshJobs, refreshSettings, error, success, run, track }), [page, navigate, setBeforeNavigate, connected, info, settings, jobs, theme, setTheme, pinnedTools, togglePinnedTool, refresh, refreshJobs, refreshSettings, error, success, run, track]);
   const sidebarNav = [...new Set(pinnedTools)].flatMap(id => { const item = nav.find(item => item.id === id && id !== 'home' && id !== 'settings'); return item ? [item] : []; });
   const activeNav = page === 'phonetics' ? { name: '音标教学' } : nav.find(item => item.id === page)!;
-  const pages = { clipboard: <ClipboardPage />, 'orb-settings': <OrbSettingsPage />, ram: <SystemMemoryPage />, relay: <RelayPage />, filesync: <FileSyncPage />, home: <HomePage />, memory: <ProjectMemoryPage />, media: <MediaPage />, netease: <NetEasePage />, live: <LivePage />, captions: <CaptionsPage />, practice: <PracticePage />, phonetics: <PhoneticsPage />, expenses: <ExpensesPage />, network: <NetworkPage />, shizuku: <ShizukuPage />, fnconnect: <FnConnectPage />, gpu: <GpuGuardPage />, codex: <CodexPage />, scripts: <QuickScriptsPage />, plugins: <PluginsPage />, settings: <SettingsPage /> };
+  const pages = { 'ai-quota': <AiQuotaPage />, clipboard: <ClipboardPage />, 'orb-settings': <OrbSettingsPage />, ram: <SystemMemoryPage />, relay: <RelayPage />, filesync: <FileSyncPage />, home: <HomePage />, memory: <ProjectMemoryPage />, media: <MediaPage />, netease: <NetEasePage />, live: <LivePage />, captions: <CaptionsPage />, practice: <PracticePage />, phonetics: <PhoneticsPage />, expenses: <ExpensesPage />, network: <NetworkPage />, fnconnect: <FnConnectPage />, gpu: <GpuGuardPage />, netmount: <NetMountPage />, stackchan: <StackChanPage />, codex: <CodexPage />, 'script-tools': <ScriptToolsPage />, scripts: <QuickScriptsPage />, plugins: <PluginsPage />, settings: <SettingsPage /> };
 
   return <AppContext.Provider value={value}>
     {captions ? <Suspense fallback={null}><CaptionOverlay /></Suspense> : overlay ? <div className="overlay-shell"><Suspense fallback={<div role="status">加载中…</div>}><LivePage overlay /></Suspense></div> : <div className={cx('app-shell', collapsed && 'nav-collapsed')}>

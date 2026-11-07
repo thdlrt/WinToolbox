@@ -4,6 +4,7 @@ import { native, rpc } from '../api';
 import { useApp } from '../context';
 import { basename, Button, cx, dateText, Empty, Field, Modal, Notice, PageActions, PathInput, Section } from '../ui';
 import FeishuBridgePanel from './FeishuBridge';
+import QQBridgePanel from './QQBridge';
 
 interface Model { id: string; name?: string; default_context?: number; max_context?: number; context_window?: number; visibility?: string }
 interface Scan { models: Model[]; current: { model?: string; context?: number }; config_path: string; cache_path: string; warnings?: string[]; hash: string }
@@ -12,7 +13,7 @@ interface Backup { path?: string; backup_path?: string; created_at?: string | nu
 
 export default function CodexPage() {
   const { connected, run, error, success } = useApp();
-  const [tab, setTab] = useState<'model' | 'feishu'>('model');
+  const [tab, setTab] = useState<'model' | 'feishu' | 'qq'>('model');
   const [home, setHome] = useState('');
   const [configPath, setConfigPath] = useState('');
   const [cachePath, setCachePath] = useState('');
@@ -36,8 +37,9 @@ export default function CodexPage() {
   const restoreBackup = async () => { if (!restore) return; setBusy('restore'); const check = await run(() => rpc<Scan>('codex.scan', paths())); if (check) { const result = await run(() => rpc('codex.restore', { ...paths(), backup_path: restore, expected_hash: check.hash })); if (result) { setRestore(undefined); setPreview(undefined); success('已从备份恢复配置。'); await scanModels(); } } setBusy(''); };
 
   return <>
-    <div className="tab-bar settings-tabs"><button className={cx(tab === 'model' && 'active')} onClick={() => setTab('model')}>模型配置</button><button className={cx(tab === 'feishu' && 'active')} onClick={() => setTab('feishu')}>飞书监听</button></div>
+    <div className="tab-bar settings-tabs"><button className={cx(tab === 'model' && 'active')} onClick={() => setTab('model')}>模型配置</button><button className={cx(tab === 'feishu' && 'active')} onClick={() => setTab('feishu')}>飞书监听</button><button className={cx(tab === 'qq' && 'active')} onClick={() => setTab('qq')}>QQ 监听</button></div>
     {tab === 'feishu' && <FeishuBridgePanel />}
+    {tab === 'qq' && <QQBridgePanel />}
     {tab === 'model' && <>
     <PageActions action={<Button busy={busy === 'backups'} disabled={!connected} onClick={listBackups}><History size={16} />配置备份</Button>} />
     <div className="codex-workspace"><Section title="模型扫描" action={<Button variant="primary" disabled={!connected} busy={busy === 'scan'} onClick={scanModels}><ScanSearch size={16} />扫描模型</Button>}><Field label="Codex 主目录（可选）"><PathInput value={home} onChange={value => { setHome(value); setScan(undefined); changed(); }} placeholder="默认使用当前用户的 .codex 目录" onError={error} /></Field><details className="details"><summary>指定配置文件与缓存文件</summary><div className="form-stack top-gap"><Field label="配置文件"><PathInput value={configPath} onChange={value => { setConfigPath(value); changed(); }} file placeholder="自动查找 config.toml" onError={error} /></Field><Field label="模型缓存"><PathInput value={cachePath} onChange={value => { setCachePath(value); changed(); }} file placeholder="自动查找 models_cache.json" onError={error} /></Field></div></details>{scan?.warnings?.map(warning => <Notice key={warning} tone="warning">{warning}</Notice>)}</Section>

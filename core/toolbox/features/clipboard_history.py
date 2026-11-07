@@ -69,7 +69,15 @@ class WindowsClipboard:
                 return seq, ('text', self.read_bytes(13).decode('utf-16-le', errors='replace').split('\0', 1)[0])
             return seq, None
 
-    def write(self, kind, payload):
+    def read_text(self):
+        """Menu translation should not decode/copy an image just to look for text."""
+        with self.opened():
+            seq = self.sequence()
+            if self.u.IsClipboardFormatAvailable(self.excluded) or not self.u.IsClipboardFormatAvailable(13):
+                return seq, None
+            return seq, ('text', self.read_bytes(13).decode('utf-16-le', errors='replace').split('\0', 1)[0])
+
+    def write(self, kind, payload, *, expected_sequence=None):
         if kind == 'text': fmt, raw = 13, (payload + '\0').encode('utf-16-le')
         else:
             from PIL import Image
@@ -84,6 +92,8 @@ class WindowsClipboard:
             try: c.memmove(ptr, raw, len(raw))
             finally: self.k.GlobalUnlock(handle)
             with self.opened():
+                if expected_sequence is not None and self.sequence() != expected_sequence:
+                    raise ValueError('识别期间剪贴板已变化，未覆盖新内容；可手动复制识别结果')
                 if not self.u.EmptyClipboard() or not self.u.SetClipboardData(fmt, handle): raise OSError('写入剪贴板失败')
                 handle = None
                 if kind == 'image':

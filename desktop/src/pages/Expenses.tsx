@@ -1,19 +1,22 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { FilePlus2, Filter, Paperclip, Plus, RefreshCw, Save, Search, Trash2 } from 'lucide-react';
+import { FilePlus2, Files, Filter, Paperclip, Plus, RefreshCw, Save, Search, Trash2 } from 'lucide-react';
 import { errorText, native, rpc, type Job } from '../api';
 import { useApp } from '../context';
-import { activeJob, Button, Empty, Field, IconButton, Modal, Notice, Progress, Section } from '../ui';
+import { activeJob, Button, CheckField, Empty, Field, IconButton, Modal, Notice, Progress, Section } from '../ui';
 import { attachmentFileName, pendingExpenseAttachments, recentExpensePeriod, type PendingExpenseAttachment, attachmentKinds, changeExpenseType, emptyExpenseFilters, expenseDirty, expenseDraft, expenseMoney, expensePeriodValid, expenseQueryParams, expenseSettlement, expenseStatus, expenseValidation, localDate, newExpenseInPeriod, normalizeExpenseEntry, type AttachmentKind, type ExpenseAttachment, type ExpenseDraft, type ExpenseEntry, type ExpenseSummary, type ExpensePeriod, type ExpenseFilters, type ExpenseType } from '../expensesState';
 import '../expenses.css';
 import LedgerSync from '../LedgerSync';
 import ExpenseProjects from '../ExpenseProjects';
+import ExpenseAiImport, { type AiExpenseReview } from '../ExpenseAiImport';
 import { legacyExpenseProject, type ExpenseProject } from '../expensesState';
 
 interface MonthResult { month: string | null; start_month: string; end_month: string; summary_scope: string; settlement_mode?: 'general' | 'half'; items: ExpenseEntry[]; summary: ExpenseSummary[]; categories: string[]; queryKey?: string }
 interface Transition { proceed: () => void; cancel?: () => void }
 type CommitJob = Job & { result?: { entry?: ExpenseEntry } };
 type ExportJob = Job & { result?: { path?: string; rows?: number } };
+type MergeJob = Job & { result?: { path?: string; pages?: number; merged?: number; skipped?: string[] } };
 const completed = (status: string) => ['completed', 'succeeded', 'success'].includes(status);
+const mergeableAttachment = (name: string) => /\.(pdf|png|jpe?g|webp)$/i.test(name);
 
 export default function ExpensesPage() {
   const { connected, jobs, track, setBeforeNavigate } = useApp();
@@ -36,7 +39,11 @@ export default function ExpensesPage() {
   const [commitJob, setCommitJob] = useState<CommitJob>();
   const [pendingAttachments, setPendingAttachments] = useState<PendingExpenseAttachment[]>([]);
   const [removedAttachments, setRemovedAttachments] = useState<string[]>([]);
+  const [kindEdits, setKindEdits] = useState<Record<string, AttachmentKind>>({});
   const [failure, setFailure] = useState('');
+  const [aiOpen, setAiOpen] = useState(false);
+  const aiReview = useRef<AiExpenseReview | undefined>(undefined);
+  const [aiSaved, setAiSaved] = useState<{ batch_id: string; item_id: string; entry_id: string }>();
   const [transition, setTransition] = useState<Transition>();
   const [deleting, setDeleting] = useState(false);
   const mounted = useRef(true);
@@ -44,11 +51,15 @@ export default function ExpensesPage() {
   const view = useRef(0);
   const saveRequest = useRef<{ payload: string; id: string } | undefined>(undefined);
   const pendingCommit = !!commitJob && activeJob(commitJob.status);
-  const dirty = editing && (expenseDirty(draft, base) || pendingAttachments.length > 0 || removedAttachments.length > 0);
-  const current = useRef({ period, filters, item, draft, dirty, busy: busy || (pendingCommit ? 'commit' : ''), editing, pendingAttachments, removedAttachments }); current.current = { period, filters, item, draft, dirty, busy: busy || (pendingCommit ? 'commit' : ''), editing, pendingAttachments, removedAttachments };
+  const dirty = editing && (expenseDirty(draft, base) || pendingAttachments.length > 0 || removedAttachments.length > 0 || Object.keys(kindEdits).length > 0);
+  const current = useRef({ period, filters, item, draft, dirty, busy: busy || (pendingCommit ? 'commit' : ''), editing, pendingAttachments, removedAttachments, kindEdits }); current.current = { period, filters, item, draft, dirty, busy: busy || (pendingCommit ? 'commit' : ''), editing, pendingAttachments, removedAttachments, kindEdits };
   const latestExport = jobs.filter(job => job.tool === 'expenses.export').sort((a, b) => b.created_at.localeCompare(a.created_at))[0] as ExportJob | undefined;
   const exportPath = latestExport?.artifacts?.[0]?.path || latestExport?.result?.path;
   const exportRunning = !!latestExport && activeJob(latestExport.status);
+  const latestMerge = (item ? jobs.filter(job => job.tool === 'expenses.attachments.merge' && (job.params as { id?: string }).id === item.id) : []).sort((a, b) => b.created_at.localeCompare(a.created_at))[0] as MergeJob | undefined;
+  const mergeRunning = !!latestMerge && activeJob(latestMerge.status);
+  const mergePath = latestMerge && completed(latestMerge.status) ? latestMerge.artifacts?.[0]?.path || latestMerge.result?.path : undefined;
+  const mergeableCount = item?.attachments.filter(attachment => !removedAttachments.includes(attachment.id) && mergeableAttachment(attachment.original_name)).length || 0;
   const locked = !!busy || pendingCommit;
   const report = useCallback((reason: unknown) => { if (mounted.current) setFailure(errorText(reason)); }, []);
   const load = useCallback(async () => {
@@ -67,11 +78,12 @@ export default function ExpensesPage() {
   };
   useEffect(() => { if (connected) void loadProjects().catch(report); }, [connected, loadProjects, report]);
   const adopt = useCallback((value: ExpenseEntry) => {
-    value = normalizeExpenseEntry(value); const next = expenseDraft(value); setItem(value); setDraft(next); setBase(next); setPendingAttachments([]); setRemovedAttachments([]); setCommitJob(undefined); saveRequest.current = undefined;
-    current.current = { ...current.current, item: value, draft: next, dirty: false, pendingAttachments: [], removedAttachments: [] };
+    value = normalizeExpenseEntry(value); const next = expenseDraft(value); setItem(value); setDraft(next); setBase(next); setPendingAttachments([]); setRemovedAttachments([]); setKindEdits({}); setCommitJob(undefined); saveRequest.current = undefined;
+    current.current = { ...current.current, item: value, draft: next, dirty: false, pendingAttachments: [], removedAttachments: [], kindEdits: {} };
   }, []);
   const dismissEditor = useCallback(() => {
-    view.current++; setEditing(false); setItem(undefined); setFailure(''); setPendingAttachments([]); setRemovedAttachments([]); saveRequest.current = undefined; current.current = { ...current.current, dirty: false, editing: false, item: undefined };
+    aiReview.current = undefined;
+    view.current++; setEditing(false); setItem(undefined); setFailure(''); setPendingAttachments([]); setRemovedAttachments([]); setKindEdits({}); saveRequest.current = undefined; current.current = { ...current.current, dirty: false, editing: false, item: undefined, pendingAttachments: [], removedAttachments: [], kindEdits: {} };
   }, []);
   const closeEditor = useCallback(() => {
     if (current.current.busy) return;
@@ -80,20 +92,27 @@ export default function ExpensesPage() {
   const closeTransition = useCallback(() => { if (current.current.busy) return; transition?.cancel?.(); setTransition(undefined); }, [transition]);
   const closeDelete = useCallback(() => { if (!current.current.busy) setDeleting(false); }, []);
   const open = async (value?: ExpenseEntry) => {
-    view.current++; setPendingAttachments([]); setRemovedAttachments([]); saveRequest.current = undefined; setCommitJob(undefined); setFailure(''); setKind(value?.entry_type === 'income' ? 'payment' : 'invoice'); setItem(value); const next = value ? expenseDraft(value) : { ...newExpenseInPeriod(period), project_id: filters.project_id && filters.project_id !== 'all' ? filters.project_id : projects.find(project => !project.archived)?.id || legacyExpenseProject, category: filters.project_id === legacyExpenseProject ? 'AI订阅' : '其他', status: projects.find(project => project.id === filters.project_id)?.settlement_mode === 'general' ? 'non_reimbursable' as const : 'waiting' as const };
-    setDraft(next); setBase(next); setEditing(true); current.current = { ...current.current, item: value, draft: next, dirty: false, editing: true, pendingAttachments: [], removedAttachments: [] };
+    aiReview.current = undefined;
+    view.current++; setPendingAttachments([]); setRemovedAttachments([]); setKindEdits({}); saveRequest.current = undefined; setCommitJob(undefined); setFailure(''); setKind(value?.entry_type === 'income' ? 'payment' : 'invoice'); setItem(value); const next = value ? expenseDraft(value) : { ...newExpenseInPeriod(period), project_id: filters.project_id && filters.project_id !== 'all' ? filters.project_id : projects.find(project => !project.archived)?.id || legacyExpenseProject, category: filters.project_id === legacyExpenseProject ? 'AI订阅' : '其他', status: projects.find(project => project.id === filters.project_id)?.settlement_mode === 'general' ? 'non_reimbursable' as const : 'waiting' as const };
+    setDraft(next); setBase(next); setEditing(true); current.current = { ...current.current, item: value, draft: next, dirty: false, editing: true, pendingAttachments: [], removedAttachments: [], kindEdits: {} };
     if (!value) return;
     const token = view.current; setBusy('open');
     try { const fresh = await rpc<ExpenseEntry>('expenses.get', { id: value.id }); if (mounted.current && token === view.current) adopt(fresh); }
     catch (reason) { report(reason); }
     finally { if (mounted.current && token === view.current) setBusy(''); }
   };
+  const openAiDraft = async (review: AiExpenseReview) => {
+    await open();
+    aiReview.current = review;
+    setDraft(review.draft); setPendingAttachments(review.attachments);
+    current.current = { ...current.current, draft: review.draft, dirty: true, pendingAttachments: review.attachments };
+  };
   const saveDraft = useCallback(async () => {
     const snapshot = current.current;
     if (snapshot.item && !snapshot.dirty) return snapshot.item;
     const invalid = expenseValidation(snapshot.draft); if (invalid) { report(invalid); return; }
     const token = view.current;
-    const payload = { ...snapshot.draft, amount: snapshot.draft.amount.trim(), ...(snapshot.item ? { id: snapshot.item.id, revision: snapshot.item.revision } : {}), attachments_add: snapshot.pendingAttachments, attachments_remove: snapshot.removedAttachments };
+    const payload = { ...snapshot.draft, amount: snapshot.draft.amount.trim(), ...(snapshot.item ? { id: snapshot.item.id, revision: snapshot.item.revision } : {}), ...(aiReview.current ? { ai_draft: { batch_id: aiReview.current.batch_id, item_id: aiReview.current.item_id } } : {}), attachments_add: snapshot.pendingAttachments, attachments_remove: snapshot.removedAttachments, attachments_kind: Object.entries(snapshot.kindEdits).map(([id, kind]) => ({ id, kind })) };
     const signature = JSON.stringify(payload);
     if (saveRequest.current?.payload !== signature) saveRequest.current = { payload: signature, id: crypto.randomUUID() };
     let job = pendingCommit && commitJob ? commitJob : await rpc<CommitJob>('expenses.commit', { ...payload, request_id: saveRequest.current.id });
@@ -107,7 +126,7 @@ export default function ExpensesPage() {
     if (!completed(job.status)) throw new Error(errorText(job.error || job.message || '保存未完成，请重试。'));
     const value = job.result?.entry;
     if (!value) throw new Error('未能读取保存结果，请重试检查。');
-    if (mounted.current && token === view.current) { adopt(value); await load(); }
+    if (mounted.current && token === view.current) { if (aiReview.current) setAiSaved({ batch_id: aiReview.current.batch_id, item_id: aiReview.current.item_id, entry_id: value.id }); adopt(value); await load(); }
     return value;
   }, [adopt, load, report, commitJob, pendingCommit, track]);
   const save = async () => {
@@ -148,12 +167,32 @@ export default function ExpensesPage() {
     try { const result = await rpc<{ path: string }>('expenses.attachment', { id: item.id, attachment_id: attachment.id }); await native.open(result.path); }
     catch (reason) { report(reason); }
   };
+  const mergeAttachments = async () => {
+    if (!item || busy) return;
+    setBusy('merge'); setFailure('');
+    try { track(await rpc<Job>('expenses.attachments.merge', { id: item.id }), '正在把附件合并为单一 PDF。'); }
+    catch (reason) { report(reason); }
+    finally { if (mounted.current) setBusy(''); }
+  };
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; listToken.current++; view.current++; }; }, []);
   useEffect(() => {
     if (!connected || !expensePeriodValid(period)) return;
     setFailure(''); const timer = setTimeout(() => void load().catch(report), filters.query ? 180 : 0);
     return () => clearTimeout(timer);
   }, [connected, period, filters, load, report]);
+  const visibleSnapshot = useRef<{ loading: boolean; readyKey: string }>({ loading: false, readyKey: '' });
+  visibleSnapshot.current = { loading, readyKey: data?.queryKey || '' };
+  useEffect(() => {
+    const reload = () => {
+      if (document.hidden || !connected || visibleSnapshot.current.loading) return;
+      if (!expensePeriodValid(current.current.period)) return;
+      const currentQuery = JSON.stringify(expenseQueryParams(current.current.period, current.current.filters));
+      if (visibleSnapshot.current.readyKey === currentQuery) return;
+      void load().catch(report);
+    };
+    document.addEventListener('visibilitychange', reload);
+    return () => document.removeEventListener('visibilitychange', reload);
+  }, [connected, load, report]);
   useEffect(() => {
     setBeforeNavigate?.(() => {
       if (current.current.busy) return false;
@@ -179,31 +218,34 @@ export default function ExpensesPage() {
   const selectedProject = projects.find(project => project.id === filters.project_id);
   const categories = [...new Set(['AI订阅', '其他报销', '其他', '转账收入', ...(visibleData?.categories || [])])];
   return <div className="expenses-page">
+    {aiOpen && <ExpenseAiImport projects={projects} projectId={filters.project_id || legacyExpenseProject} hidden={editing || !!transition || deleting} saved={aiSaved} onReview={review => void openAiDraft(review)} onClose={() => setAiOpen(false)} />}
     <LedgerSync onSynced={onSynced} />
     <div className="expenses-project-toolbar"><Field label="项目"><select aria-label="筛选项目" value={filters.project_id || 'all'} onChange={event => changeFilter({ project_id: event.target.value })}><option value="all">全部项目</option>{projects.map(project => <option key={project.id} value={project.id}>{project.name}{project.archived ? '（已归档）' : ''}</option>)}</select></Field><Button disabled={!connected} onClick={() => setManageProjects(true)}>管理项目</Button><span className="flex-spacer" /><select aria-label="导出格式" value={exportFormat} onChange={event => setExportFormat(event.target.value)}><option value="xlsx">Excel (.xlsx)</option><option value="csv">CSV</option></select><Button busy={exporting} disabled={!connected || !periodValid || exportRunning} onClick={exportLedger}>导出所选区间</Button></div>
     {latestExport && <div className="expenses-export" aria-live="polite">
       {exportRunning ? <><span>{latestExport.message || '正在导出表格…'}</span><Progress value={latestExport.progress} /></> : completed(latestExport.status) ? <><span>表格已导出{latestExport.result?.rows !== undefined ? ` · ${latestExport.result.rows} 条` : ''}</span>{exportPath && <Button variant="ghost" disabled={!connected} onClick={() => void native.open(exportPath).catch(report)}>打开表格</Button>}</> : <Notice tone="warning">{latestExport.status === 'failed' ? `导出失败：${errorText(latestExport.error || latestExport.message || '请重试。')}` : latestExport.status === 'interrupted' ? '导出已中断，可重新导出。' : '导出已取消。'}</Notice>}
     </div>}
-    <div className="expenses-toolbar"><div className="expenses-period"><Field label="起始日期"><input type="date" aria-label="起始日期" value={period.start_date || ''} onChange={event => changePeriod({ start_date: event.target.value })} /></Field><span>至</span><Field label="结束日期"><input type="date" aria-label="结束日期" value={period.end_date || ''} onChange={event => changePeriod({ end_date: event.target.value })} /></Field><Button variant="ghost" onClick={() => changePeriod(monthPeriod())}>本月</Button><Button variant="ghost" title="包含本月的最近 3 个自然月，截止今天" onClick={() => changePeriod(recentExpensePeriod(3))}>近3月</Button><Button variant="ghost" title="包含本月的最近 6 个自然月，截止今天" onClick={() => changePeriod(recentExpensePeriod(6))}>近半年</Button></div><div><IconButton label="刷新记账" disabled={!connected || loading || !periodValid} onClick={() => void load().catch(report)}><RefreshCw size={16} /></IconButton><Button variant="primary" disabled={!connected || !periodValid || selectedProject?.archived} onClick={() => void open()}><Plus size={16} />新增条目</Button></div></div>
+    <div className="expenses-toolbar"><div className="expenses-period"><Field label="起始日期"><input type="date" aria-label="起始日期" value={period.start_date || ''} onChange={event => changePeriod({ start_date: event.target.value })} /></Field><span>至</span><Field label="结束日期"><input type="date" aria-label="结束日期" value={period.end_date || ''} onChange={event => changePeriod({ end_date: event.target.value })} /></Field><Button variant="ghost" onClick={() => changePeriod(monthPeriod())}>本月</Button><Button variant="ghost" title="包含本月的最近 3 个自然月，截止今天" onClick={() => changePeriod(recentExpensePeriod(3))}>近3月</Button><Button variant="ghost" title="包含本月的最近 6 个自然月，截止今天" onClick={() => changePeriod(recentExpensePeriod(6))}>近半年</Button></div><div><IconButton label="刷新记账" disabled={!connected || loading || !periodValid} onClick={() => void load().catch(report)}><RefreshCw size={16} /></IconButton><Button disabled={!connected || selectedProject?.archived} onClick={() => { setAiSaved(undefined); setAiOpen(true); }}>AI 记账</Button><Button variant="primary" disabled={!connected || !periodValid || selectedProject?.archived} onClick={() => void open()}><Plus size={16} />新增条目</Button></div></div>
     {!periodValid && <Notice tone="warning">请选择有效的起止日期，结束日期不能早于起始日期。</Notice>}
     {failure && !editing && !transition && !deleting && <Notice tone="warning">{failure}</Notice>}
-    {splitSettlement && <p className="small-note expenses-summary-hint">应均摊金额 =（消费总额 − 已报销总额）÷ 2，按分四舍五入；等待报销暂不扣除。区间汇总不受列表筛选影响，按所选项目与条目日期汇总。</p>}
+    {splitSettlement && <p className="small-note expenses-summary-hint">应均摊金额 = 参与均摊的未报销支出 ÷ 2，按分四舍五入。取消均摊的费用由自己承担；等待报销暂不扣除。</p>}
     {!!visibleData?.summary.length && <div className="expenses-totals">{visibleData.summary.map(value => {
       const settlement = expenseSettlement(value.settlement_remaining);
-      return <Section key={value.currency} className="expenses-currency"><div className="expenses-currency-heading"><span className="expenses-currency-label">{value.currency}</span><small>等待报销 {expenseMoney(value.pending)}</small></div><dl><div><dt>消费总额</dt><dd>{expenseMoney(value.expense_total)}</dd></div><div><dt>已报销总额</dt><dd>{expenseMoney(value.reimbursed)}</dd></div>{splitSettlement && <div title="（消费总额 − 已报销总额）÷ 2，按分四舍五入；等待报销暂不扣除"><dt>应均摊金额</dt><dd>{expenseMoney(value.share_due)}</dd></div>}<div><dt>收入</dt><dd>{expenseMoney(value.transfer_income)}</dd></div><div className={`expenses-settlement ${settlement.kind}`} title={splitSettlement ? "应均摊金额 − 转账收入" : "收入 + 已报销 − 支出"}><dt>{splitSettlement ? settlement.label : "收支结余"}</dt><dd>{splitSettlement ? settlement.amount : expenseMoney(value.net)}</dd></div></dl></Section>;
+      return <Section key={value.currency} className="expenses-currency"><div className="expenses-currency-heading"><span className="expenses-currency-label">{value.currency}</span><small>等待报销 {expenseMoney(value.pending)}</small></div><dl><div><dt>消费总额</dt><dd>{expenseMoney(value.expense_total)}</dd></div><div><dt>已报销总额</dt><dd>{expenseMoney(value.reimbursed)}</dd></div>{splitSettlement && <div title="参与均摊的未报销支出 ÷ 2；由自己承担的支出不参与结算"><dt>应均摊金额</dt><dd>{expenseMoney(value.share_due)}</dd></div>}<div><dt>收入</dt><dd>{expenseMoney(value.transfer_income)}</dd></div><div className={`expenses-settlement ${settlement.kind}`} title={splitSettlement ? "应均摊金额 − 转账收入" : "收入 + 已报销 − 支出"}><dt>{splitSettlement ? settlement.label : "收支结余"}</dt><dd>{splitSettlement ? settlement.amount : expenseMoney(value.net)}</dd></div></dl></Section>;
     })}</div>}
     <div className="expenses-filters"><div className="search-input"><Search size={15} /><input aria-label="搜索条目" placeholder="搜索名称、分类或备注" value={filters.query} onChange={event => changeFilter({ query: event.target.value })} /></div><select aria-label="筛选类型" value={filters.entry_type} onChange={event => changeFilter({ entry_type: event.target.value })}><option value="">全部类型</option><option value="expense">支出</option><option value="income">转账收入</option></select><Button variant="ghost" aria-expanded={moreFilters} onClick={() => setMoreFilters(!moreFilters)}><Filter size={14} />更多筛选{[filters.status, filters.category, filters.currency].filter(Boolean).length > 0 && ` · ${[filters.status, filters.category, filters.currency].filter(Boolean).length}`}</Button>{filtering && <Button variant="ghost" onClick={() => { const next = { ...emptyExpenseFilters(), project_id: filters.project_id }; current.current.filters = next; setFilters(next); listToken.current++; }}>清除筛选</Button>}</div>
     {moreFilters && <div className="expenses-more-filters"><Field label="报销状态"><select aria-label="筛选报销状态" disabled={filters.entry_type === 'income'} value={filters.status} onChange={event => changeFilter({ status: event.target.value })}><option value="">全部状态</option>{Object.entries(expenseStatus).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></Field><Field label="分类"><select aria-label="筛选分类" value={filters.category} onChange={event => changeFilter({ category: event.target.value })}><option value="">全部分类</option>{categories.map(value => <option key={value}>{value}</option>)}</select></Field><Field label="币种"><select aria-label="筛选币种" value={filters.currency} onChange={event => changeFilter({ currency: event.target.value })}><option value="">全部币种</option>{['CNY', 'USD', 'EUR', 'HKD'].map(value => <option key={value}>{value}</option>)}</select></Field></div>}
-    <Section className="expenses-list">{visibleItems.length ? <><div className="expenses-list-heading"><span>日期</span><span>名称 / 类型 / 分类</span><span>金额</span><span>报销状态</span><span>附件</span></div>{visibleItems.map(value => <button className="expenses-row" key={value.id} disabled={loading} onClick={() => void open(value)}><time>{value.date}</time><span className="expenses-row-title"><strong>{value.title}</strong><small>{projects.find(project => project.id === value.project_id)?.name || '项目'} · {value.entry_type === 'income' ? '收入' : '支出'}{value.category && value.category !== '转账收入' ? ` · ${value.category}` : ''}</small>{value.validation_warning && <small className="expense-warning">{value.validation_warning}</small>}</span><span className={`expenses-amount ${value.entry_type}`}>{value.entry_type === 'income' ? '+' : '−'}{expenseMoney(value.amount)} <small>{value.currency}</small></span><span className={`expenses-status ${value.status}`}>{value.entry_type === 'income' ? '—' : expenseStatus[value.status as keyof typeof expenseStatus]}</span><span className="expenses-attachment-count"><Paperclip size={13} />{value.attachments.length}</span></button>)}</> : <Empty title={!periodValid ? '请选择有效日期区间' : loading ? '正在加载…' : failure ? '读取失败，请重试' : filtering ? '没有符合筛选条件的条目' : '区间内暂无条目'} />}</Section>    {editing && !transition && !deleting && <Modal title={item ? '编辑条目' : '新增条目'} onClose={closeEditor} wide><div className="modal-body expenses-editor">{item?.validation_warning && <Notice tone="warning">{item.validation_warning}</Notice>}
+    <Section className="expenses-list">{visibleItems.length ? <><div className="expenses-list-heading"><span>日期</span><span>名称 / 类型 / 分类</span><span>金额</span><span>报销状态</span><span>附件</span></div>{visibleItems.map(value => <button className="expenses-row" key={value.id} disabled={loading} onClick={() => void open(value)}><time>{value.date}</time><span className="expenses-row-title"><strong>{value.title}</strong><small>{projects.find(project => project.id === value.project_id)?.name || '项目'} · {value.entry_type === 'income' ? '收入' : '支出'}{value.category && value.category !== '转账收入' ? ` · ${value.category}` : ''}</small>{value.entry_type === 'expense' && !value.split_enabled && projects.find(project => project.id === value.project_id)?.settlement_mode === 'half' && <small className="expense-self-paid">自己承担 · 不参与均摊</small>}{value.validation_warning && <small className="expense-warning">{value.validation_warning}</small>}</span><span className={`expenses-amount ${value.entry_type}`}>{value.entry_type === 'income' ? '+' : '−'}{expenseMoney(value.amount)} <small>{value.currency}</small></span><span className={`expenses-status ${value.status}`}>{value.entry_type === 'income' ? '—' : expenseStatus[value.status as keyof typeof expenseStatus]}</span><span className="expenses-attachment-count"><Paperclip size={13} />{value.attachments.length}</span></button>)}</> : <Empty title={!periodValid ? '请选择有效日期区间' : loading ? '正在加载…' : failure ? '读取失败，请重试' : filtering ? '没有符合筛选条件的条目' : '区间内暂无条目'} />}</Section>    {editing && !transition && !deleting && <Modal title={aiReview.current ? '确认 AI 条目' : item ? '编辑条目' : '新增条目'} onClose={closeEditor} wide><div className="modal-body expenses-editor">{aiReview.current && <Notice>请核对识别结果、附件和均摊选项，点击保存后才会正式入账。</Notice>}{item?.validation_warning && <Notice tone="warning">{item.validation_warning}</Notice>}
       <fieldset className="plain-fieldset" disabled={locked || !connected}>
         <div className="expense-editor-grid"><Field label="项目"><select aria-label="条目项目" value={draft.project_id} onChange={event => change({ project_id: event.target.value })}>{projects.filter(project => !project.archived || project.id === draft.project_id).map(project => <option key={project.id} value={project.id}>{project.name}{project.archived ? '（已归档）' : ''}</option>)}</select></Field><Field label="条目类型"><select aria-label="条目类型" value={draft.entry_type} onChange={event => setType(event.target.value as ExpenseType)}><option value="expense">支出</option><option value="income">转账收入</option></select></Field>
         <Field label="名称"><input value={draft.title} maxLength={200} placeholder="如 ChatGPT 订阅" onChange={event => change({ title: event.target.value })} /></Field><Field label="分类"><input list="expense-categories" value={draft.category} maxLength={80} onChange={event => change({ category: event.target.value })} /><datalist id="expense-categories"><option value="AI订阅" /><option value="其他报销" /><option value="其他" /><option value="转账收入" /></datalist></Field></div>
-        <div className="expense-editor-details"><Field label="日期"><input type="date" value={draft.date} onChange={event => change({ date: event.target.value })} /></Field><Field label="金额"><input inputMode="decimal" value={draft.amount} placeholder="0.00" onChange={event => change({ amount: event.target.value })} /></Field><Field label="币种"><select value={draft.currency} onChange={event => change({ currency: event.target.value })}>{['CNY', 'USD', 'EUR', 'HKD'].map(value => <option key={value}>{value}</option>)}</select></Field>{draft.entry_type === 'expense' && <Field label="报销状态"><select aria-label="报销状态" value={draft.status} onChange={event => change({ status: event.target.value as ExpenseDraft['status'] })}>{Object.entries(expenseStatus).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></Field>}</div>
+        <div className="expense-editor-details"><Field label="日期"><input type="date" value={draft.date} onChange={event => change({ date: event.target.value })} /></Field><Field label="金额"><input inputMode="decimal" value={draft.amount} placeholder="0.00" onChange={event => change({ amount: event.target.value })} /></Field><Field label="币种"><select value={draft.currency} onChange={event => change({ currency: event.target.value })}><option value="">请选择币种</option>{['CNY', 'USD', 'EUR', 'HKD'].map(value => <option key={value}>{value}</option>)}</select></Field>{draft.entry_type === 'expense' && <Field label="报销状态"><select aria-label="报销状态" value={draft.status} onChange={event => change({ status: event.target.value as ExpenseDraft['status'] })}>{Object.entries(expenseStatus).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></Field>}</div>
+        {draft.entry_type === 'expense' && projects.find(project => project.id === draft.project_id)?.settlement_mode === 'half' && <div className="expense-sharing"><CheckField label="参与两人均摊" checked={draft.split_enabled} onChange={split_enabled => change({ split_enabled })} hint="取消后由自己承担，不计入双方结算；仍计入消费总额。" /></div>}
         <Field label="备注"><textarea rows={2} maxLength={5000} value={draft.notes} onChange={event => change({ notes: event.target.value })} /></Field>
       </fieldset>
-      <div className="expenses-attachments"><div className="expenses-attachments-heading"><h3>附件</h3><select aria-label="附件类型" disabled={locked} value={kind} onChange={event => setKind(event.target.value as AttachmentKind)}>{Object.entries(attachmentKinds).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select><Button disabled={!connected || locked} busy={busy === 'attach'} onClick={attach}><FilePlus2 size={14} />添加附件</Button></div><p className="small-note">附件会在保存条目时一并提交。支持 PDF、图片和 OFD；单个最多 50 MiB，每次最多 200 MiB。</p>
-        {item?.attachments.map(attachment => { const removed = removedAttachments.includes(attachment.id); return <div className={`expenses-attachment${removed ? ' pending-remove' : ''}`} key={attachment.id}><button onClick={() => void openAttachment(attachment)} title="打开附件副本"><Paperclip size={14} /><span>{attachment.original_name}</span></button><small>{removed ? '待移除' : attachmentKinds[attachment.kind]}</small>{removed ? <Button variant="ghost" disabled={locked} onClick={() => setRemovedAttachments(value => value.filter(id => id !== attachment.id))}>撤销移除</Button> : <IconButton label={`移除附件 ${attachment.original_name}`} disabled={locked} onClick={() => setRemovedAttachments(value => [...value, attachment.id])}><Trash2 size={14} /></IconButton>}</div>; })}
-        {pendingAttachments.map(attachment => <div className="expenses-attachment" key={attachment.path}><button onClick={() => void native.open(attachment.path).catch(report)} title={attachment.path}><Paperclip size={14} /><span>{attachmentFileName(attachment.path)}</span></button><small>{attachmentKinds[attachment.kind]} · 待保存</small><IconButton label={`移除待保存附件 ${attachmentFileName(attachment.path)}`} disabled={locked} onClick={() => setPendingAttachments(value => value.filter(entry => entry.path !== attachment.path))}><Trash2 size={14} /></IconButton></div>)}
+      <div className="expenses-attachments"><div className="expenses-attachments-heading"><h3>附件</h3><select aria-label="附件类型" disabled={locked} value={kind} onChange={event => setKind(event.target.value as AttachmentKind)}>{Object.entries(attachmentKinds).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select><Button disabled={!connected || locked} busy={busy === 'attach'} onClick={attach}><FilePlus2 size={14} />添加附件</Button><Button disabled={!connected || locked || !mergeableCount || mergeRunning} busy={busy === 'merge'} title="把本条目的 PDF 与图片附件按列表顺序合并为一个 PDF 导出" onClick={() => void mergeAttachments()}><Files size={14} />合并为 PDF</Button></div><p className="small-note">附件会在保存条目时一并提交。支持 PDF、图片和 OFD；单个最多 50 MiB，每次最多 200 MiB。已保存附件的分类可在右侧改选，随保存一并提交；OFD 不参与合并。</p>
+        {item?.attachments.map(attachment => { const removed = removedAttachments.includes(attachment.id); return <div className={`expenses-attachment${removed ? ' pending-remove' : ''}`} key={attachment.id}><button onClick={() => void openAttachment(attachment)} title="打开附件副本"><Paperclip size={14} /><span>{attachment.original_name}</span></button>{removed ? <small>待移除</small> : <select aria-label={`附件分类 ${attachment.original_name}`} disabled={locked} value={kindEdits[attachment.id] ?? attachment.kind} onChange={event => setKindEdits(value => { const next = { ...value }; if (event.target.value === attachment.kind) delete next[attachment.id]; else next[attachment.id] = event.target.value as AttachmentKind; return next; })}>{Object.entries(attachmentKinds).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select>}{removed ? <Button variant="ghost" disabled={locked} onClick={() => setRemovedAttachments(value => value.filter(id => id !== attachment.id))}>撤销移除</Button> : <IconButton label={`移除附件 ${attachment.original_name}`} disabled={locked} onClick={() => setRemovedAttachments(value => [...value, attachment.id])}><Trash2 size={14} /></IconButton>}</div>; })}
+        {pendingAttachments.map(attachment => <div className="expenses-attachment" key={attachment.path}><button onClick={() => void native.open(attachment.path).catch(report)} title={attachment.path}><Paperclip size={14} /><span>{attachmentFileName(attachment.path)}</span></button><select aria-label={`待保存附件分类 ${attachmentFileName(attachment.path)}`} disabled={locked} value={attachment.kind} onChange={event => setPendingAttachments(value => value.map(entry => entry.path === attachment.path ? { ...entry, kind: event.target.value as AttachmentKind } : entry))}>{Object.entries(attachmentKinds).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select><small>待保存</small><IconButton label={`移除待保存附件 ${attachmentFileName(attachment.path)}`} disabled={locked} onClick={() => setPendingAttachments(value => value.filter(entry => entry.path !== attachment.path))}><Trash2 size={14} /></IconButton></div>)}
+        {latestMerge && <div className="expenses-merge" aria-live="polite">{mergeRunning ? <><span>{latestMerge.message || '正在合并附件…'}</span><Progress value={latestMerge.progress} /></> : completed(latestMerge.status) ? <><span>已合并 {latestMerge.result?.merged ?? 0} 个附件 · {latestMerge.result?.pages ?? 0} 页{latestMerge.result?.skipped?.length ? `，跳过 OFD：${latestMerge.result.skipped.join('、')}` : ''}</span>{mergePath && <Button variant="ghost" disabled={!connected} onClick={() => void native.open(mergePath).catch(report)}>打开 PDF</Button>}</> : <Notice tone="warning">合并失败：{errorText(latestMerge.error || latestMerge.message || '请重试。')}</Notice>}</div>}
       </div>
       {commitJob && pendingCommit && <div className="expenses-progress"><span>{busy === 'save' ? commitJob.message || '正在保存条目与附件…' : '保存结果尚未确认，请检查结果后继续。'}</span><Progress value={commitJob.progress} /></div>}
       {failure && <Notice tone="warning">{failure}</Notice>}

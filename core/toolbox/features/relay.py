@@ -23,6 +23,54 @@ from ..webdav_layout import shared_config, service_config, ensure_service_direct
 
 PROPERTIES = b'<?xml version="1.0"?><d:propfind xmlns:d="DAV:"><d:prop><d:resourcetype/><d:getcontentlength/><d:getlastmodified/><d:getetag/></d:prop></d:propfind>'
 MAX_FILES = 20000
+
+
+class DownloadProgress:
+    """Byte-weighted batch progress, with bounded update frequency and recent speed."""
+    def __init__(self, job, files):
+        self.job = job
+        self.total = sum(row['size'] for row in files)
+        self.file_count = len(files)
+        self.completed = self.received = 0
+        self.index = 0
+        self.name = ''
+        self.last_time = time.monotonic()
+        self.last_bytes = 0
+        self.speed = 0
+
+    def report(self, phase, force=False):
+        self.job.check_cancelled()
+        now = time.monotonic()
+        elapsed = now - self.last_time
+        if not force and elapsed < .2:
+            return
+        delta = self.received - self.last_bytes
+        if elapsed >= .2 or delta:
+            self.speed = delta / max(.001, elapsed)
+            self.last_time, self.last_bytes = now, self.received
+        percent = min(99, self.received / self.total * 100) if self.total else 0
+        self.job.progress(percent, f'{"下载" if phase == "downloading" else "校验并保存"} {self.name}', transfer={
+            'received_bytes': self.received, 'total_bytes': self.total,
+            'bytes_per_second': self.speed if phase == 'downloading' else 0,
+            'file_name': self.name, 'file_index': self.index, 'file_count': self.file_count,
+            'phase': phase,
+        })
+
+    def start_file(self, row, index):
+        self.name, self.index = row['name'], index
+        self.report('downloading', force=True)
+
+    def update(self, received):
+        self.received = self.completed + received
+        self.report('downloading')
+
+    def verifying(self):
+        self.report('verifying', force=True)
+
+    def finish_file(self, row):
+        self.completed += row['size']
+        self.received = self.completed
+        self.report('verifying', force=True)
 REGISTRY_ROOTS = (r'Software\Classes\*\shell\WinToolboxRelay', r'Software\Classes\Directory\shell\WinToolboxRelay')
 
 
@@ -213,7 +261,7 @@ class Remote(SnapshotRemote):
             raise ValueError('远端文件大小未通过校验，本地文件已保留')
         return expected, remote
 
-    def download_file(self, row, output, job):
+    def download_file(self, row, output, job, progress=None):
         headers = {'Accept-Encoding': 'identity'}
         if strong_etag(row['etag']): headers['If-Match'] = row['etag']
         received, digest = 0, hashlib.sha256()
@@ -221,15 +269,19 @@ class Remote(SnapshotRemote):
             with self.client.stream('GET', self.url(row['path']), headers=headers) as response:
                 self.checked(response, (200,))
                 with output.open('xb') as stream:
-                    for block in response.iter_bytes(1024 * 1024):
+                    for block in response.iter_bytes(64 * 1024 if progress else 1024 * 1024):
                         job.check_cancelled()
                         received += len(block)
                         if received > row['size']: raise ValueError('远端文件在下载时变大，请刷新后重试')
                         digest.update(block)
                         stream.write(block)
-                        job.progress(min(95, received / max(1, row['size']) * 95), f'下载 {row["name"]}')
+                        if progress:
+                            progress.update(received)
+                        else:
+                            job.progress(min(95, received / max(1, row['size']) * 95), f'下载 {row["name"]}')
                     stream.flush()
                     os.fsync(stream.fileno())
+            if progress: progress.verifying()
             if received != row['size'] or self.stat(row['path'], job) != row:
                 raise ValueError('远端文件发生变化或下载不完整，请重试')
             return digest.hexdigest()
@@ -604,6 +656,7 @@ class Relay:
     def download(self, remote, job):
         paths = job.params.get('paths')
         if not isinstance(paths, list) or not paths or len(paths) > 1000: raise ValueError('请选择需要下载的项目')
+        job.progress(0, '正在统计下载文件…')
         root = safe_path(remote.config['download_dir'])
         root.mkdir(parents=True, exist_ok=True)
         files, names, directories = [], set(), set()
@@ -621,8 +674,10 @@ class Relay:
             if not target.is_relative_to(root): raise ValueError('下载目录越界')
             target.mkdir(parents=True, exist_ok=True)
         outputs = []
-        for row in files:
+        progress = DownloadProgress(job, files)
+        for index, row in enumerate(files, 1):
             job.check_cancelled()
+            progress.start_file(row, index)
             destination = safe_path(root / row['path'])
             if not destination.is_relative_to(root): raise ValueError('下载路径越界')
             destination.parent.mkdir(parents=True, exist_ok=True)
@@ -630,12 +685,13 @@ class Relay:
                 destination = destination.with_name(destination.stem + '-' + uuid.uuid4().hex[:8] + destination.suffix)
             with tempfile.TemporaryDirectory(prefix='.relay-download-', dir=destination.parent) as temporary:
                 staged = Path(temporary) / 'content'
-                remote.download_file(row, staged, job)
+                remote.download_file(row, staged, job, progress)
                 job.check_cancelled()
                 safe_path(destination)
                 # Atomic exclusive publication: a file created concurrently is never replaced.
                 os.link(staged, destination)
             outputs.append(str(destination))
+            progress.finish_file(row)
         return {'paths': outputs, 'directory': str(root)}
 
     def delete(self, remote, job):

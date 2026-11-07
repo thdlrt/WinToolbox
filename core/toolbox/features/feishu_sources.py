@@ -5,6 +5,7 @@ assistant summaries or message IDs in read results as evidence of a send.
 """
 from __future__ import annotations
 
+import ast
 import json
 import os
 import re
@@ -19,13 +20,25 @@ def receipt_objects(value, depth=0):
     if isinstance(value, dict):
         yield value
         # Only unwrap execution envelopes, never sent message bodies.
-        for key in ('output', 'text', 'result', 'value'):
+        for key in ('output', 'text', 'result', 'value', 'content'):
             if key in value:
                 yield from receipt_objects(value[key], depth + 1)
     elif isinstance(value, list):
         for item in value:
             yield from receipt_objects(item, depth + 1)
     elif isinstance(value, str):
+        # node_repl can render an execFile result with util.inspect instead of
+        # JSON. Decode only its stdout string literals, then require the usual
+        # successful Feishu response below; the message body is never evidence.
+        stdout = re.search(r'\bstdout:\s*(.*?)\s*,?\s*\bstderr:', value, re.S)
+        if stdout:
+            parts = re.findall(r"'(?:\\.|[^'\\])*'", stdout.group(1))
+            try:
+                decoded = ''.join(ast.literal_eval(part) for part in parts)
+            except (SyntaxError, ValueError):
+                decoded = ''
+            if decoded:
+                yield from receipt_objects(decoded, depth + 1)
         decoder = json.JSONDecoder()
         cursor = 0
         found = False
@@ -79,7 +92,8 @@ def sent_in_rollout(path, thread_id, message_id, chat_id):
                         calls.add(call_id)
                 send = '+messages-send' in command and chat_id in command
                 reply = '+messages-reply' in command
-                if ('lark-cli' in command and (send or reply) and '--as bot' in command
+                bot_identity = re.search(r'''--as(?:\s+bot\b|['"]\s*,\s*['"]bot\b)''', command)
+                if ('lark-cli' in command and (send or reply) and bot_identity
                         and '--dry-run' not in command
                         and not any(read in command for read in ('+messages-mget', '+chat-messages-list', '+messages-search'))):
                     calls.add(call_id)

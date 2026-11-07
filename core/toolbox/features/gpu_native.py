@@ -109,7 +109,7 @@ def adapters():
                 if method(adapter, 10, W.LONG, C.POINTER(Desc))(adapter, C.byref(desc)) < 0:
                     raise RuntimeError('无法读取显卡标识')
                 if not desc.flags & 2:
-                    result.append({'name': desc.name, 'vendor': desc.vendor,
+                    result.append({'name': desc.name, 'vendor': desc.vendor, 'dedicated_bytes': desc.dedicated,
                                    'luid': f'0x{desc.luid.high & 0xffffffff:08x}_0x{desc.luid.low:08x}'})
             finally:
                 method(adapter, 2, W.ULONG)(adapter)

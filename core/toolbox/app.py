@@ -140,6 +140,12 @@ class App:
             self.ledger_before_restore()
 
     def close(self):
+        if hasattr(self, 'ai_proxy'):
+            self.ai_proxy.close()
+        if hasattr(self, "cli_server"):
+            self.cli_server.close()
+        if hasattr(self, "stackchan"):
+            self.stackchan.close()
         if hasattr(self, "clipboard_history"):
             self.clipboard_history.close()
         self.data_sync.close()
@@ -155,8 +161,12 @@ class App:
             self.gpu_guard_close()
         if hasattr(self, "fnconnect_close"):
             self.fnconnect_close()
+        if hasattr(self, "netmount_close"):
+            self.netmount_close()
         if hasattr(self, "feishu_bridge"):
             self.feishu_bridge.close()
+        if hasattr(self, "qq_bridge"):
+            self.qq_bridge.close()
         holder = getattr(self, "live_holder", None)
         if holder and holder.get("session") and not holder["session"].stop_event.is_set():
             holder["session"].stop()
@@ -172,6 +182,12 @@ class App:
         self.providers.client.close()
 
     def prepare_exit(self):
+        if hasattr(self, 'ai_proxy'):
+            self.ai_proxy.close()
+        if hasattr(self, "cli_server"):
+            self.cli_server.close()
+        if hasattr(self, "stackchan"):
+            self.stackchan.close()
         if hasattr(self, "clipboard_history"):
             self.clipboard_history.close()
         self.data_sync.close()
@@ -185,8 +201,12 @@ class App:
             self.gpu_guard_close()
         if hasattr(self, "fnconnect_close"):
             self.fnconnect_close()
+        if hasattr(self, "netmount_close"):
+            self.netmount_close()
         if hasattr(self, "feishu_bridge"):
             self.feishu_bridge.close()
+        if hasattr(self, "qq_bridge"):
+            self.qq_bridge.close()
         holder = getattr(self, "live_holder", None)
         if holder and holder.get("session") and not holder["session"].stop_event.is_set():
             holder["session"].stop()

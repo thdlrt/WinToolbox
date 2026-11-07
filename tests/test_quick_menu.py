@@ -28,6 +28,15 @@ def finish(app, job):
     raise AssertionError('job did not finish')
 
 
+def test_retired_shizuku_is_removed_from_saved_shortcuts(service):
+    _, menu = service
+    menu.path.write_text(json.dumps({'tools': ['relay', 'shizuku', 'home']}), encoding='utf-8')
+    assert menu.settings()['tools'] == ['relay', 'home']
+    assert menu.save({'enabled': False})['tools'] == ['relay', 'home']
+    with pytest.raises(ValueError, match='固定工具入口无效'):
+        menu.save({'tools': ['shizuku']})
+
+
 @pytest.mark.parametrize('text', ['performance', 'Hello world!', 'Bonjour tout le monde', 'こんにちは', 'Привет мир', 'This is a longer sentence about memory.'])
 def test_plain_foreign_text_is_eligible(text):
     assert translation_eligible(text)
@@ -64,11 +73,17 @@ def test_target_language_guard_uses_current_settings_before_api(service,monkeypa
     assert calls==[]
 
 
-@pytest.mark.parametrize('text', ['', '纯中文', 'https://example.com/a?q=foo', 'ftp://example.xyz', 'example.xyz', 'hello@example.com',
-                                 'Contact user@example.com today', 'password=abcd', 'api_key: sk-abcdefghijklmno',
-                                 'aBcd1234!', 'abcdef123456', 'ghp_abcdefghijklmno', 'sk-12345678901234567890', 'C:\\notes\\file.txt'])
-def test_addresses_and_credentials_never_auto_translate(text):
+@pytest.mark.parametrize('text', ['', '纯中文', '13912543781 127.0.0.1 8080', '!!! ... ???  ###'])
+def test_text_without_foreign_letters_never_auto_translate(text):
     assert not translation_eligible(text)
+
+
+@pytest.mark.parametrize('text', ['https://example.com/a?q=foo', 'ftp://example.xyz', 'example.xyz', 'hello@example.com',
+                                  'Contact user@example.com today', 'password=abcd', 'api_key: sk-abcdefghijklmno',
+                                  'aBcd1234!', 'abcdef123456', 'ghp_abcdefghijklmno', 'sk-12345678901234567890',
+                                  'C:\\notes\\file.txt'])
+def test_links_emails_and_credentials_are_translated_too(text):
+    assert translation_eligible(text)
 
 
 def test_protected_selection_is_discarded(service):
@@ -111,6 +126,47 @@ def test_dissolve_is_previewed_and_preserves_files(service, tmp_path):
     assert (tmp_path / 'a.txt').read_text() == 'original'
     assert (tmp_path / 'nested' / 'b.txt').read_text() == 'nested'
     assert result['artifacts']
+
+
+def test_dissolve_multiple_folders_in_one_preview_and_run(service, tmp_path):
+    app, _ = service
+    first = tmp_path / 'first'; first.mkdir()
+    second = tmp_path / 'second'; second.mkdir()
+    (first / 'first.txt').write_text('first content')
+    (first / 'first-nested').mkdir(); (first / 'first-nested' / 'deep.txt').write_text('first nested')
+    (second / 'second.txt').write_text('second content')
+    (second / 'second-nested').mkdir(); (second / 'second-nested' / 'deep.txt').write_text('second nested')
+
+    context = app.call('quick.capture', {'paths': [str(first), str(second)]})
+    assert 'dissolve' in [action['id'] for action in context['actions']]
+    params = {'id': context['id'], 'action': 'dissolve'}
+    plan = app.call('quick.preview', params)
+    assert plan['roots'] == [str(first), str(second)]
+    assert len(plan['operations']) == 4
+    assert first.exists() and second.exists()
+
+    result = finish(app, app.call('quick.run', {**params, 'token': plan['token']}))
+    assert result['status'] == 'completed', result
+    assert not first.exists() and not second.exists()
+    assert (tmp_path / 'first.txt').read_text() == 'first content'
+    assert (tmp_path / 'first-nested' / 'deep.txt').read_text() == 'first nested'
+    assert (tmp_path / 'second.txt').read_text() == 'second content'
+    assert (tmp_path / 'second-nested' / 'deep.txt').read_text() == 'second nested'
+
+
+def test_dissolve_multiple_folders_rejects_cross_root_conflict(service, tmp_path):
+    app, _ = service
+    first = tmp_path / 'first'; first.mkdir()
+    second = tmp_path / 'second'; second.mkdir()
+    (first / 'same.txt').write_text('keep first')
+    (second / 'same.txt').write_text('keep second')
+    context = app.call('quick.capture', {'paths': [str(first), str(second)]})
+
+    with pytest.raises(ValueError, match='同名冲突'):
+        app.call('quick.preview', {'id': context['id'], 'action': 'dissolve'})
+    assert (first / 'same.txt').read_text() == 'keep first'
+    assert (second / 'same.txt').read_text() == 'keep second'
+    assert not (tmp_path / 'same.txt').exists()
 
 
 def test_conflicts_stale_preview_and_nested_selection(service, tmp_path):
@@ -206,3 +262,23 @@ def test_clipboard_entry_can_be_pinned_and_removed(service):
     snap = menu.capture({})
     assert snap['settings']['tools'] == ['clipboard', 'relay']
     assert menu.save({'tools': ['relay']})['tools'] == ['relay']
+
+
+def test_selection_translation_setting_defaults_on_and_is_validated(service):
+    _, menu = service
+    assert menu.settings()['selection_translate'] is True
+    assert menu.save({'selection_translate': False})['selection_translate'] is False
+    with pytest.raises(ValueError, match='开关值无效'):
+        menu.save({'selection_translate': 'yes'})
+
+
+def test_non_file_triggers_do_not_stat_selected_paths(monkeypatch):
+    from toolbox.features.quick_menu import matches
+    def unavailable(*args):
+        raise AssertionError('unrelated trigger touched a potentially slow network path')
+    monkeypatch.setattr(Path, 'is_file', unavailable)
+    monkeypatch.setattr(Path, 'is_dir', unavailable)
+    context = {'paths': ['Z:/offline/item'], 'text': 'hello', 'foreign': True}
+    for trigger in ('always', 'text', 'foreign_text', 'files', 'selection'):
+        assert matches(trigger, context)
+    assert not matches('missing', context)

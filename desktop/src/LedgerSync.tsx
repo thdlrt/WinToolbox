@@ -7,7 +7,7 @@ import { ledgerMigrationMessage, type LedgerMigrationStatus } from './ledgerSync
 
 interface SyncStatus extends LedgerMigrationStatus { configured: boolean; syncing: boolean; pending: number; last_sync?: string | number | null; error?: string; conflicts: number; incomplete?: number }
 interface Conflict { entity_type: string; id: string; title?: string; name?: string; heads: string[]; fields: Record<string, { op_id: string; value: unknown }[]> }
-const labels: Record<string, string> = { name: '名称', title: '名称', date: '日期', amount: '金额', currency: '币种', entry_type: '收支类型', status: '报销状态', notes: '备注', category: '分类', project_id: '项目', settlement_mode: '结算方式', archived: '归档状态', target: '目标', port: '端口', timeout_ms: '超时', attempts: '次数' };
+const labels: Record<string, string> = { name: '名称', title: '名称', date: '日期', amount: '金额', currency: '币种', entry_type: '收支类型', status: '报销状态', notes: '备注', category: '分类', project_id: '项目', settlement_mode: '结算方式', split_enabled: '参与均摊', archived: '归档状态', target: '目标', port: '端口', timeout_ms: '超时', attempts: '次数' };
 const show = (value: unknown) => typeof value === 'string' ? value : JSON.stringify(value);
 const valueNames: Record<string, string> = { general: '收支记账', half: '报销后两人均摊', income: '收入', expense: '支出', waiting: '等待报销', reimbursed: '已报销', non_reimbursable: '不可报销', not_applicable: '不适用' };
 export function syncTime(value?: string | number | null) { if (!value) return ''; const date = new Date(typeof value === 'number' ? value * 1000 : value); return Number.isNaN(date.getTime()) ? '' : date.toLocaleString(); }
@@ -44,6 +44,7 @@ export default function LedgerSync({ onSynced }: { onSynced: () => void }) {
   const conflict = conflicts?.[0];
   const migrationMessage = ledgerMigrationMessage(status);
   const candidateLabel = (field: string, value: unknown) => {
+    if (field === 'split_enabled') return value ? '参与均摊' : '自己承担';
     if (field === 'project_id' && typeof value === 'string') return projectNames[value] || value;
     if (field === 'archived') return value ? '已归档' : '未归档';
     if (field.startsWith('attachment:')) return value && typeof value === 'object' && 'original_name' in value ? String(value.original_name) : value === null ? '移除附件' : show(value);

@@ -17,3 +17,12 @@
 .relay-log-row { display:flex; align-items:center; gap:12px; flex-wrap:wrap; padding:12px 0; border-bottom:1px solid var(--border); } .relay-name { touch-action:none; user-select:none; cursor:grab; } .relay-name:active { cursor:grabbing; }
 
 .relay-row-actions { display:flex; gap:6px; }
+.relay-download { margin: 14px 0; padding: 16px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); }
+.relay-download-heading, .relay-download-stats { display: flex; align-items: center; flex-wrap: wrap; gap: 14px; }
+.relay-download-heading > span { margin-left: auto; font-variant-numeric: tabular-nums; }
+.relay-download progress { display: block; width: 100%; height: 10px; margin: 12px 0; border: 0; border-radius: 5px; overflow: hidden; appearance: none; }
+.relay-download progress::-webkit-progress-bar { background: var(--border); border-radius: 5px; }
+.relay-download progress::-webkit-progress-value { background: var(--accent, #3569e8); border-radius: 5px; }
+.relay-download-stats { font-variant-numeric: tabular-nums; }
+.relay-download-name { margin-top: 8px; overflow-wrap: anywhere; }
+.relay-download-error { margin-top: 8px; color: var(--danger, #b93838); overflow-wrap: anywhere; }

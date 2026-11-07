@@ -5,6 +5,7 @@ import { isDesktop, native, rpc, type Job } from '../api';
 import { useApp } from '../context';
 import { activeJob, Button, CheckField, dateText, Empty, Field, Notice, Section, statusLabel } from '../ui';
 import '../relay.css';
+import RelayDownloadProgress from '../RelayDownloadProgress';
 
 interface Entry { path: string; name: string; directory: boolean; size: number; modified: number | null; etag: string }
 interface Config { url: string; username: string; remote_path: string; download_dir: string; has_password: boolean; configured: boolean; shared_configured?: boolean; migration?: { pending?: boolean; warning?: string; legacy_path?: string }; context_menu: { enabled: boolean; supported: boolean } }
@@ -220,9 +221,11 @@ export default function RelayPage() {
       }} onPointerUp={() => { pointer.current = undefined; }} onPointerCancel={() => { pointer.current = undefined; }} onClick={() => { if (!entry.directory) setSelected([entry.path]); }}>{entry.directory && <Folder size={16} />}<span>{entry.name}</span></button><span>{entry.directory ? '—' : bytes(entry.size)}</span><span>{dateText(entry.modified || undefined)}</span><div className="relay-row-actions"><Button disabled={working} onClick={() => download([entry.path])}>下载</Button>{!entry.directory && <Button variant="danger" disabled={working} onClick={() => remove([entry])}>删除</Button>}</div></div>)}</div> : <Empty title={config.configured ? '当前目录没有显示的文件' : '先在设置中配置统一 WebDAV 连接'} />}
       </div>
     </Section>
-    {job && job.tool !== 'relay.upload' && job.tool !== 'relay.list' && <Notice tone={job.status === 'failed' ? 'warning' : 'info'}>{jobMessage(job)}{activeJob(job.status) && <button className="inline-link" onClick={() => void run(() => rpc('jobs.cancel', { id: job.id }))}>取消</button>}</Notice>}
+    {job?.tool === 'relay.download' && <RelayDownloadProgress job={job} onCancel={() => void run(() => rpc('jobs.cancel', { id: job.id }))} />}
+    {job && job.tool !== 'relay.upload' && job.tool !== 'relay.list' && job.tool !== 'relay.download' && <Notice tone={job.status === 'failed' ? 'warning' : 'info'}>{jobMessage(job)}{activeJob(job.status) && <button className="inline-link" onClick={() => void run(() => rpc('jobs.cancel', { id: job.id }))}>取消</button>}</Notice>}
     {report && job?.tool !== 'relay.upload' && <Notice>{report}</Notice>}
-    {dragStatus && <Notice>{dragStatus}{cacheJob && activeJob(cacheJob.status) && <> {Math.round(cacheJob.progress)}% <button className="inline-link" onClick={() => void run(() => rpc('jobs.cancel', { id: cacheJob.id }))}>取消</button></>}</Notice>}
+    {dragStatus && <Notice>{dragStatus}</Notice>}
+    {cacheJob && activeJob(cacheJob.status) && <RelayDownloadProgress job={cacheJob} onCancel={() => void run(() => rpc('jobs.cancel', { id: cacheJob.id }))} />}
     <Section title="按时间清理"><div className="relay-toolbar"><span>清理整个中转目录中超过</span><select aria-label="清理保留时间" value={days} onChange={e => { setDays(Number(e.target.value)); setPlan(undefined); }}><option value={1}>1 天</option><option value={7}>1 周</option><option value={30}>30 天</option><option value={90}>90 天</option></select><span>未修改的文件</span><Button disabled={!config.configured || working} onClick={() => { setPlan(undefined); void submit('cleanup_preview', { days }); }}><Trash2 size={16} />预览清理</Button></div>
       {plan && <><Notice tone="warning">将永久删除 {plan.files.length} 个文件，释放 {bytes(plan.bytes)}。空文件夹保留。{plan.skipped > 0 ? `${plan.skipped} 个缺少可靠时间或版本标识的文件不会清理。` : ''}</Notice><div className="relay-cleanup-list">{plan.files.map(entry => <div key={entry.path}>{entry.path} · {bytes(entry.size)} · {dateText(entry.modified || undefined)}</div>)}</div><Button variant="danger" disabled={working || !plan.files.length} onClick={() => { if (window.confirm(`永久删除预览中的 ${plan.files.length} 个远端文件？`)) { void submit('cleanup', { token: plan.token }); setPlan(undefined); } }}>确认清理 {plan.files.length} 个文件</Button></>}
     </Section>

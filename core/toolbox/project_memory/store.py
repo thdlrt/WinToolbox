@@ -209,6 +209,8 @@ class MemoryStore:
             if data["kind"] == "knowledge":
                 data.pop("status", None)
                 data.setdefault("knowledge_type", "经验")
+                from .governance import validate_governance
+                validate_governance(data)
             else:
                 data.setdefault("status", "active")
                 if data["status"] not in ("active", "blocked", "done"):

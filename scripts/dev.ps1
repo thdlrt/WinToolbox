@@ -76,10 +76,6 @@ sys.exit(1 if missing else 0)
         Invoke-DevCommand -Executable $taskUv -Arguments $taskInstallArgs -FailureMessage '安装后端依赖失败'
     }
 
-    if (-not $CheckOnly -and [string]::IsNullOrWhiteSpace($env:WINTOOLBOX_ADB)) {
-        Invoke-DevCommand -Executable $taskPython -Arguments @((Join-Path $PSScriptRoot 'prepare_adb.py')) -FailureMessage '准备 ADB 失败'
-        $env:WINTOOLBOX_ADB = Join-Path $taskRoot 'desktop/src-tauri/resources/tools/adb/adb.exe'
-    }
     if ($BackendOnly -and -not $CheckOnly) {
         & $taskPython -u -m toolbox --data-dir $env:WINTOOLBOX_DATA_DIR
         exit $LASTEXITCODE

@@ -1,0 +1,26 @@
+import { strict as assert } from 'node:assert';
+import { receiveSettings, savedSettings, settingsPayload } from './stackchanSettings.ts';
+
+const baseline = { rotation_enabled: true, rotation_pages: ['tasks', 'weather', 'pc'], dsh_enabled: true, screen_mode: 'auto', printer_host: '', printer_enabled: false, has_token: true, has_printer_access_code: false };
+let form = receiveSettings(undefined, baseline);
+assert.deepEqual(settingsPayload(form, '', ''), {});
+form = { ...form, draft: { ...form.draft, rotation_pages: ['tasks', 'pc'] } };
+assert.deepEqual(settingsPayload(form, '', ''), { rotation_pages: ['tasks', 'pc'] }, 'page changes must reach save RPC without resending other settings');
+form = receiveSettings(form, { ...baseline, printer_host: '192.168.1.5', has_printer_access_code: true });
+assert.deepEqual(form.draft.rotation_pages, ['tasks', 'pc'], 'status polling must retain unsaved page choices');
+assert.equal(form.draft.printer_host, '192.168.1.5', 'printer import must merge into untouched fields');
+assert.equal(form.draft.has_printer_access_code, true);
+form = receiveSettings(form, { ...form.saved, screen_mode: 'off' });
+assert.equal(form.draft.screen_mode, 'off', 'immediate screen command must merge without losing other edits');
+assert.deepEqual(settingsPayload(form, '', ''), { rotation_pages: ['tasks', 'pc'] });
+const submitted = form.draft;
+const response = { ...form.saved, rotation_pages: submitted.rotation_pages };
+const whileSaving = { ...form, draft: { ...form.draft, dsh_enabled: false } };
+form = savedSettings(whileSaving, submitted, response);
+assert.deepEqual(settingsPayload(form, '', ''), { dsh_enabled: false }, 'save acknowledgement must not discard later edits');
+form = savedSettings(form, form.draft, { ...response, dsh_enabled: false });
+assert.deepEqual(settingsPayload(form, '', ''), {}, 'successful save must clear dirty state');
+form = { ...form, draft: { ...form.draft, has_token: false, has_printer_access_code: false } };
+assert.deepEqual(settingsPayload(form, '', ''), {}, 'read-only secret flags must never be submitted');
+assert.deepEqual(settingsPayload(form, 'fixture-device-token', 'ABCD1234'), { token: 'fixture-device-token', printer_access_code: 'ABCD1234' });
+console.log('StackChan settings: partial saves, page choices, polling, import, immediate commands, save races and secret flags passed.');
