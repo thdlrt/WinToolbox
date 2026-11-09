@@ -363,7 +363,9 @@ def register(app):
                                'name': name, 'location': location, 'at': time.monotonic()}
         return {**ai_config.preview(payload['ai']), 'token': token, 'source_platform': payload['platform'],
                 'scope': 'config', 'created_at': payload['created_at'], 'same_platform': payload['platform'] == 'windows',
-                'message': '恢复本机设置及共享 AI 配置，应用数据不变。' if payload['platform'] == 'windows' else '仅恢复共享 AI 配置，本机偏好和应用数据不变。'}
+                'feature_files': sorted(payload.get('features', {}).get('files', {})),
+                'ai_aggregation_count': len(payload.get('features', {}).get('ai_aggregation', {})),
+                'message': '恢复应用设置、功能配置及共享 AI 配置，应用数据不变。' if payload['platform'] == 'windows' else '仅恢复共享 AI 配置，本机偏好和应用数据不变。'}
 
     def secret_for(job):
         with lock:
@@ -460,6 +462,39 @@ def register(app):
                 credentials.pop(token, None)
             raise
 
+    def migration_sources(_=None):
+        from ..webdav_layout import ledger_sources
+        return {'sources': [dict(key=key, url=row['config']['url'], username=row['config']['username'],
+                                 remote_path=row['config']['remote_path'], error=row.get('error'))
+                            for key, row in ledger_sources(app.data_dir).items() if row.get('pending')]}
+
+    def migration_save(params):
+        from ..webdav_layout import ledger_sources, update_ledger_source
+        if set(params) - {'key', 'url', 'username', 'remote_path', 'password'}:
+            raise ValueError('旧位置连接包含未知字段')
+        source = ledger_sources(app.data_dir).get(params.get('key'))
+        if not source:
+            raise ValueError('旧位置已不存在，请刷新后重试')
+        old = source['config']
+        value = dict(old, url=normalized_url(params.get('url', old['url'])),
+                     username=str(params.get('username', old['username'])).strip(),
+                     remote_path=normalized_path(params.get('remote_path', old['remote_path'])))
+        if not value['username'] or len(value['username']) > 256 or any(ord(c) < 32 for c in value['username']):
+            raise ValueError('请填写有效的旧位置用户名')
+        password = params.get('password', '')
+        if not isinstance(password, str):
+            raise ValueError('旧位置密码应为文本')
+        if password:
+            value['password_dpapi'] = protect(password)
+        elif value['url'] != old['url'] or value['username'] != old['username']:
+            raise ValueError('修改旧位置地址或账号时，请重新填写密码')
+        update_ledger_source(app.data_dir, params['key'], value)
+        if hasattr(app, 'data_sync'):
+            app.data_sync.request('ledger')
+        return migration_sources()
+
+    app.register('webdav.migration.sources', migration_sources)
+    app.register('webdav.migration.save', migration_save)
     app.jobs.register('webdav.upload', upload_job)
     app.jobs.register('webdav.restore', restore_job)
     for name, handler in (('get', get), ('save', save), ('test', test), ('list', listing), ('preview', preview)):

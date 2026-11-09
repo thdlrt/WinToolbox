@@ -120,6 +120,7 @@ def test_mismatched_library_and_tampered_immutable(tmp_path, dav):
     b = MemoryStore(tmp_path / 'b', device_id='b')
     try:
         a.create_project('甲')
+        b.create_project('乙的独立项目')
         remote.sync(a, Job())
         with pytest.raises(ValueError, match='其他知识库'):
             remote.sync(b, Job())
@@ -293,3 +294,44 @@ def test_saved_ssh_only_sync_works_without_webdav(tmp_path, monkeypatch):
         assert result['webdav'] == 'not_configured'
     finally:
         app.memory_close()
+
+
+def test_upgrade_empty_library_adopts_unique_remote_and_persists(tmp_path, dav):
+    remote, state = dav
+    a = MemoryStore(tmp_path / 'source', device_id='a')
+    b = MemoryStore(tmp_path / 'upgrade', device_id='b')
+    try:
+        project = a.create_project('云端已有项目')
+        remote.sync(a, Job())
+        original = b.library_id
+        result = remote.sync(b, Job())
+        assert result['library_id'] == a.library_id != original
+        assert b.projects()[0]['id'] == project['id']
+        b.reopen()
+        assert b.library_id == a.library_id
+        count = b.info()['operation_count']
+        remote.sync(b, Job())
+        assert b.info()['operation_count'] == count
+    finally:
+        a.close(); b.close()
+
+
+def test_upgrade_empty_library_does_not_guess_among_multiple_libraries(tmp_path, dav):
+    remote, state = dav
+    a = MemoryStore(tmp_path / 'source', device_id='a')
+    b = MemoryStore(tmp_path / 'upgrade', device_id='b')
+    try:
+        a.create_project('云端项目')
+        remote.sync(a, Job())
+        other = 'independent-library'
+        root = '/dav/toolbox/project-memory/' + digest(other) + '/'
+        state['dirs'].add(root)
+        state['files'][root + 'library.json'] = canonical({'format': 1, 'library_id': other})
+        original = b.library_id
+        before = dict(state['files'])
+        with pytest.raises(ValueError, match='多个库'):
+            remote.sync(b, Job())
+        assert b.library_id == original and b.info()['operation_count'] == 0
+        assert state['files'] == before
+    finally:
+        a.close(); b.close()

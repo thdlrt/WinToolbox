@@ -148,6 +148,7 @@ def register_service(app, ledger, materialize, listing, text_field, expense_lock
             with state_lock:
                 state.update(last_sync=time.time(), synced_operations=result['synced_operations'], error='\n'.join(migration_errors) or None)
             result['migration_pending'] = len(migration_errors)
+            result['migration_error'] = '\n'.join(migration_errors) or None
             app.emit('expenses.changed', synced=True)
             return result
         except Exception as exc:

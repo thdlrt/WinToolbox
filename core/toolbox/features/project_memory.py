@@ -152,6 +152,22 @@ def register(app):
                 client.close()
             lock.release()
 
+    def connect_job(job):
+        if not lock.acquire(blocking=False):
+            raise ValueError('项目记忆正在同步，请在完成后重试连接')
+        client = None
+        try:
+            from ..project_memory_reconcile import reconcile
+            client = remote()
+            result = reconcile(store, client, job.params.get('library_id'), job.params.get('mode'), job, app.data_lock)
+            manager.request('project_memory')
+            job.progress(100, '知识库已连接，本机恢复副本已保存，将继续自动同步')
+            return result
+        finally:
+            if client:
+                client.close()
+            lock.release()
+
     def libraries_job(job):
         client = remote()
         try:
@@ -236,7 +252,7 @@ def register(app):
             lock.release()
     manager.register('project_memory', '项目记忆', lambda: connections()['configured'], sync_job)
     store.on_change = lambda: manager.request('project_memory', immediate=False)
-    for name, runner in [('sync.run', lambda job: manager.run('project_memory', job)), ('sync.libraries', libraries_job),
+    for name, runner in [('sync.run', lambda job: manager.run('project_memory', job)), ('sync.libraries', libraries_job), ('sync.connect', connect_job),
                          ('ssh.install', lambda job: project_memory_ssh.install(job.params, job)),
                          ('ssh.sync', ssh_sync_job)]:
         app.jobs.register('memory.' + name, runner)

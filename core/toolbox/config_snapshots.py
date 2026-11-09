@@ -41,12 +41,17 @@ def parse(body):
 
 
 def validate(value):
-    if (not isinstance(value, dict) or set(value) != {'format', 'version', 'platform', 'created_at', 'config', 'ai'}
-            or value['format'] != FORMAT or type(value['version']) is not int or value['version'] != 2
+    if (not isinstance(value, dict) or set(value) != ({'format', 'version', 'platform', 'created_at', 'config', 'ai', 'features'} if value.get('version') == 3 else {'format', 'version', 'platform', 'created_at', 'config', 'ai'})
+            or value['format'] != FORMAT or type(value['version']) is not int or value['version'] not in (2, 3)
             or value['platform'] not in ('windows', 'android') or not isinstance(value['config'], dict)
             or type(value['created_at']) not in (int, float) or not math.isfinite(value['created_at']) or value['created_at'] < 0):
         raise ValueError('配置备份版本或字段无效')
     ai_config.validate(value['ai'])
+    if value['version'] == 3:
+        from .portable_config import validate as validate_features
+        if value['platform'] != 'windows':
+            raise ValueError('此功能配置备份需要 Windows 工具箱')
+        validate_features(value['features'])
     if value['platform'] == 'windows':
         if set(value['config']) - CONFIG_FILES:
             raise ValueError('配置备份包含非配置文件')
@@ -65,8 +70,9 @@ def encrypt(value, password, *, salt=None, nonce=None):
     if len(salt) != 16 or len(nonce) != 12:
         raise ValueError('配置加密参数无效')
     key = hashlib.pbkdf2_hmac('sha256', password.encode('utf-8'), salt, 200000, 32)
-    cipher = AESGCM(key).encrypt(nonce, encode(value), AAD)
-    envelope = {'format': FORMAT + '-encrypted', 'version': 2, 'salt': base64.b64encode(salt).decode(),
+    aad = AAD if value['version'] == 2 else b'wintoolbox-config-backup-v3'
+    cipher = AESGCM(key).encrypt(nonce, encode(value), aad)
+    envelope = {'format': FORMAT + '-encrypted', 'version': value['version'], 'salt': base64.b64encode(salt).decode(),
                 'nonce': base64.b64encode(nonce).decode(), 'ciphertext': base64.b64encode(cipher).decode()}
     encode(envelope)
     return envelope
@@ -75,17 +81,21 @@ def encrypt(value, password, *, salt=None, nonce=None):
 def decrypt(envelope, password):
     encode(envelope)
     if (not isinstance(envelope, dict) or set(envelope) != {'format', 'version', 'salt', 'nonce', 'ciphertext'}
-            or envelope['format'] != FORMAT + '-encrypted' or type(envelope['version']) is not int or envelope['version'] != 2):
+            or envelope['format'] != FORMAT + '-encrypted' or type(envelope['version']) is not int or envelope['version'] not in (2, 3)):
         raise ValueError('配置备份加密格式无效')
     try:
         salt, nonce, cipher = [base64.b64decode(envelope[k], validate=True) for k in ('salt', 'nonce', 'ciphertext')]
         if len(salt) != 16 or len(nonce) != 12 or len(cipher) < 16 or not isinstance(password, str) or not password:
             raise ValueError()
         key = hashlib.pbkdf2_hmac('sha256', password.encode('utf-8'), salt, 200000, 32)
-        body = AESGCM(key).decrypt(nonce, cipher, AAD)
+        aad = AAD if envelope['version'] == 2 else b'wintoolbox-config-backup-v3'
+        body = AESGCM(key).decrypt(nonce, cipher, aad)
     except Exception:
         raise ValueError('配置解密失败：WebDAV 密码不匹配或备份已损坏，本机配置未更改') from None
-    return validate(parse(body))
+    value = validate(parse(body))
+    if value['version'] != envelope['version']:
+        raise ValueError('配置备份版本不匹配')
+    return value
 
 
 def snapshot(app):
@@ -98,8 +108,9 @@ def snapshot(app):
             if path.is_file():
                 values[name] = parse(path.read_bytes())
         values['settings.json'] = copy.deepcopy(app.settings.value)
-        return validate({'format': FORMAT, 'version': 2, 'platform': 'windows', 'created_at': time.time(),
-                         'config': values, 'ai': ai_config.local_payload(app.settings)})
+        from .portable_config import snapshot as feature_snapshot
+        return validate({'format': FORMAT, 'version': 3, 'platform': 'windows', 'created_at': time.time(),
+                         'config': values, 'ai': ai_config.local_payload(app.settings), 'features': feature_snapshot(app)})
 
 
 def revision(app):
@@ -109,6 +120,8 @@ def revision(app):
         path = app.data_dir / name
         digest.update(name.encode())
         digest.update(path.read_bytes() if path.is_file() else b'<absent>')
+    from .portable_config import local_revision
+    digest.update(local_revision(app).encode())
     return digest.hexdigest()
 
 
@@ -144,6 +157,7 @@ def merge_ai(current, incoming):
 
 def restore(app, value, job, expected_revision):
     """Validate before writes, retain protected recovery copies, roll back every target."""
+    from . import portable_config
     value = validate(value)
     with app.data_lock, app.settings.lock:
         if hasattr(app, 'data_sync'):
@@ -156,32 +170,44 @@ def restore(app, value, job, expected_revision):
         settings['providers'], settings['roles'] = shared['providers'], shared['roles']
         validate_config('settings.json', settings)
         values['settings.json'] = settings
-        targets = set(values) | {'secrets.json'}
+        targets = {app.data_dir / name: body for name, body in values.items()}
+        features = value.get('features')
+        if features is not None:
+            targets.update(portable_config.prepare(app, features))
         recovery = app.data_dir.parent / (app.data_dir.name + '-recovery') / ('config-' + uuid.uuid4().hex)
         recovery.mkdir(parents=True)
-        before = {name: (app.data_dir / name).read_bytes() if (app.data_dir / name).exists() else None for name in targets}
-        # secrets.json contains only DPAPI ciphertext. Never persist decrypted API keys.
-        for name, body in before.items():
+        paths = set(targets) | {app.settings.secret_path}
+        before = {path: path.read_bytes() if path.is_file() else None for path in paths}
+        tables_before = portable_config.table_backup(app) if features is not None else None
+        # Recovery copies contain local DPAPI ciphertext, never portable plaintext keys.
+        for path, body in before.items():
             if body is not None:
-                (recovery / name).write_bytes(body)
+                backup = recovery / path.relative_to(app.data_dir)
+                backup.parent.mkdir(parents=True, exist_ok=True)
+                backup.write_bytes(body)
+        if tables_before is not None:
+            atomic_json(recovery / 'feature-tables.json', tables_before)
         try:
             job.check_cancelled()
-            for name, config in values.items():
-                atomic_json(app.data_dir / name, config)
+            for path, config in targets.items():
+                atomic_json(path, config)
             app.settings.reload()
             app.settings.import_secrets(shared['secrets'])
+            if features is not None:
+                portable_config.apply(app, features)
             if hasattr(app, 'reset_local_llm'):
                 app.reset_local_llm()
             if hasattr(job, 'mark_committed'):
                 job.mark_committed()
         except BaseException:
-            for name, body in before.items():
-                target = app.data_dir / name
+            for path, body in before.items():
                 if body is None:
-                    target.unlink(missing_ok=True)
+                    path.unlink(missing_ok=True)
                 else:
-                    target.write_bytes(body)
+                    path.write_bytes(body)
+            if tables_before is not None:
+                portable_config.restore_tables(app, tables_before)
             app.settings.reload()
             raise
-        return {'scope': 'config', 'files': len(values), 'include_secrets': True, 'recovery_path': str(recovery),
+        return {'scope': 'config', 'files': len(targets), 'include_secrets': True, 'recovery_path': str(recovery),
                 'restart_recommended': True, 'message': '配置已恢复，请重启工具箱。' if value['platform'] == 'windows' else '共享 AI 配置已恢复，本机偏好保持不变。'}

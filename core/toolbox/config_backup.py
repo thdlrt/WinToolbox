@@ -55,6 +55,8 @@ def validate_config(name, value):
     elif name == 'orb-settings.json':
         from .features.orb_settings import OrbSettings
         OrbSettings.validate(value.get('actions'))
+        if any(key in value and type(value[key]) is not bool for key in ('oled_auto_hide', 'enabled')):
+            raise ValueError('悬浮球开关配置无效')
     elif name == 'memory-cleaner.json':
         from .features.system_memory import validate_settings
         validate_settings(value)

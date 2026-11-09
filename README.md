@@ -4,7 +4,7 @@ Windows 语音与效率工具箱。统一处理本地音视频、实时字幕、
 
 新增[独显省电守卫](docs/GPU-GUARD.md)：电池模式应用核显偏好、接电恢复、独显占用检查与电池放电/续航显示。不等同于固件纯核显模式。
 
-[图文使用手册](output/pdf/WinToolbox_图文使用手册与设计说明.pdf) · [版本记录](docs/RELEASE-0.7.0.md) · [参与开发](CONTRIBUTING.md)
+[图文使用手册](output/pdf/WinToolbox_图文使用手册与设计说明.pdf) · [版本记录](docs/RELEASE-0.7.1.md) · [参与开发](CONTRIBUTING.md)
 
 ## 开发阶段快速使用
 

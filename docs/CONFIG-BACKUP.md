@@ -1,17 +1,31 @@
-# 统一配置备份 v2
+# 统一配置备份
 
-应用数据自动合并同步；配置备份仅在用户操作时上传或恢复。两者共用 WebDAV 连接和根目录，但不会相互替换数据。
+应用数据与 AI 聚合账户配置通过统一调度自动合并；完整配置备份由用户在设置中上传、预览及恢复。两者共用 WebDAV 连接和根目录。
 
-新备份位于 `<root>/config-backups/shared/config-{windows|android}-YYYYMMDD-HHmmss-32hex.wtconfig.json`，每次创建新文件，不覆盖其他设备备份。
+新 Windows 备份为 v3，位于 <root>/config-backups/shared/config-windows-YYYYMMDD-HHmmss-32hex.wtconfig.json，每次创建新文件。v2 的 Windows/Android 备份、旧 .wtbak 和旧 ai-config/config-v1.json 继续可读取；旧备份未包含的功能配置保持本机原样。v3 功能扩展需要更新后的 Windows 客户端，不能用旧客户端的模型配置导入替代。
 
-AES-256-GCM；PBKDF2-HMAC-SHA256，200000次，salt16字节、nonce12字节，AAD `wintoolbox-config-backup-v2`。密码为当前WebDAV密码。完整密文上限4MiB。密文对象字段为format/version/salt/nonce/ciphertext，其中format=`wintoolbox-config-backup-encrypted`、version=2，二进制值Base64编码。
+## 配置覆盖
 
-明文字段为format/version/platform/created_at/config/ai，format=`wintoolbox-config-backup`、version=2，created_at为Unix秒。ai沿用AI配置v1的供应商、角色和密钥结构。config是源平台设置：Windows只允许settings.json、orb-settings.json、memory-cleaner.json、fnconnect-tun.json；Android使用AndroidConfigBackup v1快照。
+| 配置 | 同步方式 |
+| --- | --- |
+| AI 聚合账户、额度查询凭据、调用 Key、模型与启用状态 | 加密自动合并，同时纳入完整配置备份 |
+| 模型服务、API Key、各功能模型分配、预设、主题、收藏及界面偏好 | 完整配置备份 |
+| 快捷菜单、文件占用菜单、中转菜单、悬浮球、内存清理、代理端口与接入 Key 摘要 | 完整配置备份 |
+| 飞书/QQ 桥接规则及 QQ 授权凭据 | 完整配置备份；外部 lark-cli 的登录授权由该工具管理 |
+| FN Connect 登录与转发、硬盘挂载、桌面机器人及打印机连接凭据 | 完整配置备份 |
+| 文件夹同步规则、SSH 记忆同步目标、网易云保存的账号 Cookie | 完整配置备份 |
+| 网络诊断配置 | 既有记账操作日志自动同步 |
 
-同平台恢复设置和共享AI，异平台仅恢复共享AI。接收端保留备份缺少的本机功能角色与其供应商、密钥；同ID供应商发生碰撞时为保留的本机角色复制供应商，避免引用另一个服务或密钥。每个平台只展示自己支持的功能。
+当前用于下载和解密的 WebDAV 连接保持接收设备已保存的连接；它是接入同步所需的启动配置。旧目录连接失效时，在设置的“旧目录连接”中更新对应地址、用户名或密码，再重试合并。不能把旧目录 401 当作当前目录全部同步失败。
 
-恢复先下载解密并预览，确认令牌绑定当时的本机配置和连接；修改后需重新预览。恢复失败回滚，恢复副本只保留本机受保护的密钥或加密备份，不落地明文密钥。Windows恢复需重启使所有设置生效。
+路径、盘符、端口和会话标识会随配置备份传输，接收设备需要核对实际环境。文件夹规则不携带复制基线或执行历史，恢复后自动执行关闭，检查路径后再启用。系统右键菜单的安装状态需在接收机重新启用。恢复普通功能配置后重启工具箱生效；不自动安装驱动、下载模型或迁移外部 CLI 登录。
 
-旧Windows .wtbak配置/完整备份继续只恢复配置；旧完整备份的业务数据不通过此入口导入。旧Android配置JSON和旧ai-config/config-v1.json仍可读取。旧Windows加密备份需要原备份密码。
+## 加密与恢复
 
-文件中转、记账附件、项目记忆、短信取件记录均不装入配置备份。当前WebDAV连接不从备份覆盖。
+AES-256-GCM；PBKDF2-HMAC-SHA256，200000 次，salt 16 字节、nonce 12 字节，密码为已保存的 WebDAV 密码。v2 AAD 为 wintoolbox-config-backup-v2，v3 AAD 为 wintoolbox-config-backup-v3；密文对象为 format/version/salt/nonce/ciphertext，format 为 wintoolbox-config-backup-encrypted，二进制值 Base64 编码，密文上限 4 MiB。
+
+v3 明文对象包含 format/version/platform/created_at/config/ai/features。features 使用 core/toolbox/portable_config.py 中的显式文件及配置表清单，拒绝未登记的路径；只包含配置，不复制整个 engine.sqlite3。凭据仅在加密前/解密后的内存中为可迁移文本，在接收机落盘前重新用 DPAPI 保护。
+
+恢复令牌绑定本机配置版本与连接，预览后修改配置需重新预览。恢复前保留本机受保护的文件和配置表副本，失败回滚。记账、附件、项目记忆、调用结果、用量统计、缓存、运行状态和历史均不作为功能配置恢复。
+
+AI 聚合配置的“配置同步”中还提供“使用远端覆盖”：先只读暂存并校验远端，再备份本机账户表、调用配置与同步日志，最后采用远端。此路径不需要解密旧设备留下的本机 DPAPI 凭据；无远端、远端冲突或校验失败时保持本机，写入失败回滚。

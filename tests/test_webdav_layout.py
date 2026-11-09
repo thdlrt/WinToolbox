@@ -216,3 +216,26 @@ def test_malformed_configuration_rejected_before_any_write(pair, tmp_path):
     with pytest.raises(ValueError, match='供应商'):
         import_config(target, package, Job(target.relay))
     assert target.settings.get() == before
+
+
+def test_legacy_unauthorized_connection_can_be_repaired_without_changing_current(pair):
+    from toolbox.webdav_layout import remember_ledger_source, shared_config
+    source, target, state = pair
+    stop_auto(source, target)
+    source.call('expenses.save', {'title': '旧目录记录', 'date': '2026-09-26', 'amount': '3'})
+    finish(source, source.call('expenses.sync'))
+    old = shared_config(target.data_dir)
+    target.call('webdav.save', {'remote_path': 'NewRoot'})
+    remember_ledger_source(target.data_dir, dict(old, username='expired-user'), shared_config(target.data_dir))
+    finish(target, target.call('expenses.sync'))
+    rows = target.call('webdav.migration.sources')['sources']
+    assert len(rows) == 1 and '401' in rows[0]['error']
+    assert 'password_dpapi' not in rows[0] and 'fixture-dav-password' not in json.dumps(rows)
+    current = (target.data_dir / 'webdav.json').read_bytes()
+    with pytest.raises(ValueError, match='密码'):
+        target.call('webdav.migration.save', {'key': rows[0]['key'], 'username': 'fixture-user'})
+    target.call('webdav.migration.save', {'key': rows[0]['key'], 'username': 'fixture-user', 'password': 'fixture-dav-password'})
+    finish(target, target.call('expenses.sync'))
+    assert target.call('webdav.migration.sources') == {'sources': []}
+    assert target.call('expenses.sync.status')['migration_pending'] == 0
+    assert (target.data_dir / 'webdav.json').read_bytes() == current

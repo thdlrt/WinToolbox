@@ -30,6 +30,8 @@ def register_all(app):
     network.register(app)
     from . import ai_config_sync
     ai_config_sync.register(app)
+    from .. import ai_aggregation_sync
+    ai_aggregation_sync.register(app)
 
     from . import script_tools
     script_tools.register(app)

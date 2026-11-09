@@ -140,6 +140,7 @@ export default function ProjectMemoryPage() {
     [contextDir, setContextDir] = useState(""),
     [remoteRoot, setRemoteRoot] = useState(""),
     [library, setLibrary] = useState("");
+  const [coverLibrary, setCoverLibrary] = useState(false);
   const [targets, setTargets] = useState<SshTarget[]>([]),
     [targetId, setTargetId] = useState(""),
     [targetEnabled, setTargetEnabled] = useState(true),
@@ -1424,7 +1425,7 @@ export default function ProjectMemoryPage() {
                       : "memory-hidden"
                   }
                 >
-                  <p className="muted">项目记录随统一数据同步更新。另一台设备加入同一记忆库后，即可共享项目记录和全局记忆。</p>
+                  <p className="muted">项目记录随统一数据同步更新。空记忆库会自动加入服务器上唯一的库；有多个库时请先选择。</p>
                   {syncError && <Notice tone="warning">{syncError}</Notice>}
                   <div className="button-row">
                     <Button
@@ -1440,14 +1441,14 @@ export default function ProjectMemoryPage() {
                     <summary>另一台电脑怎么接入？</summary>
                     <ol className="memory-help-steps">
                       <li>在另一台电脑配置同一个 WebDAV 地址和目录。</li>
-                      <li>点击“查找已有记忆库”，选择下面的库 ID，再加入。</li>
+                      <li>空记忆库会自动加入唯一的云端库；若有多个，点击“查找已有记忆库”后选择并加入。</li>
                       <li>
                         同步后为需要的项目启用“同步项目正文”。只阅读知识不必关联本机目录。
                       </li>
                     </ol>
                     <Field
                       label="选择已有记忆库"
-                      hint="仅空记忆库可加入，防止意外混合两个库。"
+                      hint="空库可直接加入；已有记录可合并保留，或备份后使用远端覆盖。"
                     >
                       <select
                         value={library}
@@ -1477,8 +1478,11 @@ export default function ProjectMemoryPage() {
                         })
                       }
                     >
-                      加入
+                      空库加入
                     </Button>
+                    <Button disabled={!library || busy} onClick={() => void act(async () => { await start('memory.sync.connect', { library_id: library, mode: 'merge' }); })}>合并本机与远端</Button>
+                    <Button variant="danger" disabled={!library || busy} onClick={() => setCoverLibrary(true)}>使用远端覆盖</Button>
+                    {coverLibrary && <Modal title="使用远端知识库" onClose={() => setCoverLibrary(false)}><div className="modal-body"><Notice tone="warning">将先保存本机知识库恢复副本，再使用所选远端库。仅本机记录会从当前库移出，本机项目文件保留。</Notice><div className="modal-footer"><Button onClick={() => setCoverLibrary(false)}>取消</Button><Button variant="danger" disabled={busy} onClick={() => { setCoverLibrary(false); void act(async () => { await start('memory.sync.connect', { library_id: library, mode: 'remote' }); }); }}>备份并使用远端</Button></div></div></Modal>}
                   </details>
                 </Section>
                 <Section

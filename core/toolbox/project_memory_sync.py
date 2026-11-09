@@ -103,23 +103,33 @@ class MemoryRemote(Remote):
             if directory and HEX.fullmatch(name):
                 value = json.loads(self.read(self.base + name + '/library.json'))
                 if value.get('format') != 1 or digest(value.get('library_id')) != name:
-                    raise ValueError('WebDAV 知识库标识校验失败')
+                    raise ValueError('WebDAV 知识库标识或格式不受支持；请更新两端工具箱后重试，或查找并选择其他远端库，本机记录已保留')
                 result.append({'library_id': value['library_id']})
         return result
 
-    def sync(self, store, job, verify=False):
-        self.ensure_directory()
-        self.mkdir(self.base)
+    def sync(self, store, job, verify=False, read_only=False):
+        if not read_only:
+            self.ensure_directory()
+            self.mkdir(self.base)
         info = store.info()
         existing = self.libraries()
+        if read_only and info['library_id'] not in [item['library_id'] for item in existing]:
+            raise ValueError('所选远端知识库已不存在，请重新查找并选择')
         if existing and info['library_id'] not in [item['library_id'] for item in existing]:
-            raise ValueError('服务器已有其他知识库；请先选择并加入知识库，不会自动合并')
+            # Upgrades/new devices create a fresh empty store before discovering DAV.
+            # Only an unambiguous, empty store can adopt the server identity; the
+            # store rechecks emptiness under its write lock to protect concurrent edits.
+            if len(existing) == 1 and info['operation_count'] == 0:
+                info = store.join_library(existing[0]['library_id'])
+            else:
+                raise ValueError('服务器已有其他知识库；请在项目记忆的同步设置中选择库，再选择“合并本机与远端”或“使用远端覆盖”（多个库时需明确选择）')
         root = self.base + digest(info['library_id']) + '/'
-        self.mkdir(root)
-        self.put_immutable(root + 'library.json', canonical({'format': 1, 'library_id': info['library_id']}))
-        for path in ('catalog', 'global', 'projects', 'blobs'):
-            self.mkdir(root + path + '/')
-        local = [op for op in store.export_operations() if bucket(op)]
+        if not read_only:
+            self.mkdir(root)
+            self.put_immutable(root + 'library.json', canonical({'format': 1, 'library_id': info['library_id']}))
+            for path in ('catalog', 'global', 'projects', 'blobs'):
+                self.mkdir(root + path + '/')
+        local = [] if read_only else [op for op in store.export_operations() if bucket(op)]
         uploaded = 0
         made = {'catalog', 'global'}
         remote_blobs = {name for name, directory in self.children(root + 'blobs/') if not directory}

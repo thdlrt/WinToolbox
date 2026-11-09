@@ -104,3 +104,13 @@ def promote_legacy_connection(data_dir):
         for field in ('url', 'username', 'password_dpapi'):
             shared[field] = legacy[field]
         atomic_json(data_dir / 'webdav.json', shared)
+
+
+def update_ledger_source(data_dir, key, config):
+    path = Path(data_dir) / 'webdav-migrations.json'
+    with MIGRATION_LOCK:
+        data = json.loads(path.read_text('utf-8')) if path.exists() else {}
+        if key not in data.get('ledger_sources', {}):
+            raise ValueError('旧位置已不存在，请刷新后重试')
+        data['ledger_sources'][key].update(config=config, pending=True, error=None)
+        atomic_json(path, data)

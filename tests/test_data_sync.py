@@ -114,11 +114,12 @@ def test_partial_migration_and_ssh_warnings_never_advance_success(tmp_path):
     sync.tick()
     assert 'SSH offline' in sync.status()['error']
     assert sync.status()['last_sync'] is None
-    sync.services['one']['run'] = lambda _: {'migration_pending': 1}
+    sync.services['one']['run'] = lambda _: {'migration_pending': 1, 'migration_error': '旧 WebDAV HTTP 401'}
     sync.request()
     sync.tick()
     assert sync.status()['last_sync'] is None
     assert sync.status()['services'][0]['last_sync'] is None
+    assert 'HTTP 401' in sync.status()['error']
 
 
 def test_memory_local_write_wakes_but_remote_ingest_does_not(tmp_path):
@@ -162,12 +163,13 @@ def test_startup_ignores_old_memory_auto_switch_and_has_no_auto_jobs(tmp_path, m
             return {'uploaded': 0, 'downloaded': 0}
     monkeypatch.setattr('toolbox.ledger_service.LedgerRemote', Ledger)
     monkeypatch.setattr(project_memory, 'MemoryRemote', Memory)
+    monkeypatch.setattr('toolbox.ai_aggregation_sync.sync', lambda app, job: calls.append('aggregation') or {})
     app = App(tmp_path, register_live=False)
     try:
         deadline = time.monotonic() + 4
         while not app.data_sync.status()['last_sync'] and time.monotonic() < deadline:
             time.sleep(.01)
-        assert set(calls) == {'ledger', 'memory'}
+        assert set(calls) == {'ledger', 'memory', 'aggregation'}
         assert app.call('data_sync.status')['last_sync']
         assert not any(row['tool'] in ('expenses.sync', 'memory.sync.run') for row in app.jobs.list())
         assert app.call('memory.sync.status')['auto_sync']
@@ -279,3 +281,22 @@ def test_connection_change_discards_inflight_old_connection_results(tmp_path, ol
         assert results == [{'queued': True, 'reason': 'connection_changed'}]
     sync.tick()
     assert len(calls) == 3 and sync.status()['last_sync']
+
+
+def test_remote_override_during_sync_is_actionable_instead_of_silent_queue(tmp_path):
+    sync = manager(tmp_path)
+    entered, finish = threading.Event(), threading.Event()
+    def running(_):
+        entered.set()
+        assert finish.wait(3)
+        return {}
+    sync.register('one', '配置', lambda: True, running)
+    thread = threading.Thread(target=lambda: sync.run('one'))
+    thread.start()
+    assert entered.wait(3)
+    try:
+        with pytest.raises(ValueError, match='完成后重试远端覆盖'):
+            sync.run('one', SimpleNamespace(params={'remote_only': True}))
+    finally:
+        finish.set(); thread.join(3)
+    assert not sync.status()['syncing']

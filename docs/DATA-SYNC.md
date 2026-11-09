@@ -28,3 +28,9 @@
 服务注册：`app.data_sync.register(id, label, configured_callback, run_callback)`。执行上下文提供 `params`、`check_cancelled()` 和 `progress()`。执行结果中的 `warnings` 或 `migration_pending` 会保留失败状态并重试。
 
 统一 WebDAV 配置保存后调用 `app.data_sync.request()`；旧 `ledger_auto_sync()` 和 `memory_auto_sync_wake()` 保留委托。`data-sync-state.json` 只记录最后成功和错误，不保存业务数据及凭据。关闭应用会停止调度、通知正在执行的自动任务取消，并等待其退出后关闭数据库。恢复备份在 `data_lock` 下调用 `assert_idle()`，运行中直接提示稍后恢复，不持维护锁等待网络。
+
+## AI 聚合配置
+
+服务 ai_aggregation 自动同步额度账户、调用配置和凭据，远端独立位于 <root>/ai-aggregation/，不依赖项目记忆是否已经加入云端库。沿用不可变操作和父版本关系，账户合并与删除可重试；同一账户并发修改保留双方版本并提示，明确重新保存账户后可采用本机配置。
+
+账号和调用凭据先用 WebDAV 密码 AES-GCM 加密，接收端重新用本机 DPAPI 保护。复用模型服务的账户会导出实际凭据，不把另一设备的 provider ID 当作可用密钥。额度快照和调用历史不自动复制，接收后重新查询真实额度。完整功能配置的手动加密备份范围见 CONFIG-BACKUP.md。

@@ -159,6 +159,8 @@ class DataSync:
                 if self.closing or getattr(self.app, 'maintenance', False) or self.stop.is_set() and job is None:
                     return {'skipped': True, 'reason': 'maintenance'}
                 if not service['idle'].is_set():
+                    if job is not None and getattr(job, 'params', {}).get('remote_only'):
+                        raise ValueError('此服务正在同步，请在完成后重试远端覆盖')
                     self.request(identifier)
                     return {'queued': True, 'reason': 'already_syncing'}
                 service['syncing'] = True
@@ -176,7 +178,7 @@ class DataSync:
                     error = '；'.join(str(row.get('message', row)) if isinstance(row, dict) else str(row)
                                      for row in result['warnings'])
                 if result.get('migration_pending'):
-                    error = error or '旧位置数据尚未全部合并，将继续重试'
+                    error = error or result.get('migration_error') or '旧位置数据尚未全部合并，将继续重试'
                 if result.get('skipped'):
                     error = error or '同步尚未完成，将继续重试'
         except Exception as exc:

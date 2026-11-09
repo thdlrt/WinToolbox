@@ -232,6 +232,7 @@ class AiCalls:
                    credential=None if source else protect(key.strip()) if key.strip() else old.get('credential'))
         if source:
             self.key(dict(route, **row))
+        row['revision'] = uuid.uuid4().hex
         self._put('ai_call_routes_v1', route['id'], row)
         return next(r for r in self.listing()['routes'] if r['id'] == route['id'])
 

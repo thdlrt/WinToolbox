@@ -181,3 +181,12 @@ Run/WinToolbox 写入当前可执行文件加 `--silent`。`general.startup.migr
 ## 硬盘挂载
 
 `netmount.status` 返回 engine（rclone 1.75.2）/winfsp 状态、taken_letters 与 drives（state/mounted/message/restarts）。`netmount.save` 按 RaiDrive 语义处理密码：留空保留旧值（同端点+账户），换端点/账户或 clear_password 清除；挂载中拒绝修改。`netmount.mount` / `netmount.unmount` / `netmount.test` 是后台任务；mount 最多等 30 秒盘符就绪，失败带 rclone 日志末行。挂载即启动监督线程：意外退出且存活超过 10 秒则 5 秒后用已存密码重启（最多 10 次，稳定 300 秒重置），启动即崩报错不重试。`netmount.import_raidrive` 解析 RaiDrive 服务日志恢复名称/类型/地址/盘符/只读（密码不可导出），`netmount.import_raidrive.apply` 批量保存并逐条报告；`netmount.import_webdav_sync` 返回 WebDAV 备份连接候选，表单保存时可 `reuse_webdav_password` 复用其密码。凭据只存当前用户 DPAPI 密文于 data/netmount.json（不在备份白名单）；rclone 子进程用 RCLONE_CONFIG_* 环境变量与 obscure 后的密码，argv、任务参数、事件与日志无明文。挂载随工具箱退出（close/prepare_exit）卸载，auto_mount 条目在启动 2 秒后自动挂载。引擎由 scripts/prepare_netmount.py 固定 rclone 版本与 SHA-256。详见 [NETMOUNT.md](NETMOUNT.md)。
+
+## 0.7.1 同步兼容性
+
+- memory.sync.connect {library_id,mode:'merge'|'remote'} -> 后台任务；先只读暂存远端并校验父版本、附件，再在本机写入门下备份与切换。结果含 recovery_path、warnings、conflicts。merge 改写本机操作的库身份并保留操作/实体 ID 与版本关系；remote 采用远端完整记录。本机工程文件保留，匹配的绑定更新库身份。
+- ai_aggregation.conflicts {} -> {items:[{id,parents,versions:[{op_id,local,name,model,deleted,created_at}]}]}，不返回凭据；ai_aggregation.resolve {id,parents,op_id} -> {resolved,recovery_path}，按当前 heads 校验、备份并采用版本，再安排上传。
+- webdav.migration.sources {} -> {sources:[{key,url,username,remote_path,error}]}；webdav.migration.save {key,url?,username?,remote_path?,password?} 更新旧位置连接并重试，不替换当前共享连接。密码不进入返回或任务参数。
+- 配置备份 v3 扩展见 CONFIG-BACKUP.md；v2 继续可读。新增配置必须登记导出、验证、导入、凭据处理与升级兼容。
+
+- ai_aggregation.use_remote {} -> 后台任务，经统一服务互斥；只读校验远端后备份并替换本机聚合账户/调用配置/同步日志，不解密本机旧凭据。运行中重复覆盖请求明确提示重试，不把覆盖静默合并成普通同步。

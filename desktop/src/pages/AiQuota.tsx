@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowUpRight, Check, CircleAlert, Clock3, KeyRound, Plus, RefreshCw, Search, Settings2, Trash2, Wallet } from 'lucide-react';
-import { errorText, native, rpc, type Job } from '../api';
+import { errorText, native, rpc, subscribe, type Job } from '../api';
 import { useApp } from '../context';
 import { activeJob, Button, cx, dateText, Field, IconButton, Modal, Notice } from '../ui';
 import { visiblePolling } from '../visiblePolling';
 import '../aiQuota.css';
 import AiProxyPanel from '../AiProxyPanel';
+import AiSyncConflicts from '../AiSyncConflicts';
 
 interface Platform { id: string; name: string; kind: 'balance' | 'plan'; auth: 'key' | 'cookie'; console_url: string; hint: string; sources: { id: string; name: string }[] }
 interface Meter { label: string; unit: string; used?: number; total?: number; remaining?: number; used_percent: number; remaining_percent: number; resets_at?: string }
@@ -37,7 +38,7 @@ function QuotaMeter({ item, stale }: { item: Meter; stale: boolean }) {
 }
 
 export default function AiQuotaPage() {
-  const { connected, jobs, track, error: showError } = useApp();
+  const { connected, jobs, track, settings, refreshSettings, error: showError } = useApp();
   const [platforms, setPlatforms] = useState<Platform[]>([]);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [routes, setRoutes] = useState<Route[]>([]);
@@ -64,6 +65,24 @@ export default function AiQuotaPage() {
   }, []);
   useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
   useEffect(() => { if (connected) void load().catch(e => setFailure(errorText(e))); }, [connected, load]);
+  useEffect(() => {
+    let disposed = false, off: (() => void) | undefined;
+    void subscribe(event => { if (event.type === 'ai.config.changed') void load().catch(e => { if (!disposed) setFailure(errorText(e)); }); }).then(unlisten => { if (disposed) unlisten(); else off = unlisten; }).catch(e => { if (!disposed) setFailure(errorText(e)); });
+    return () => { disposed = true; off?.(); };
+  }, [load]);
+  useEffect(() => {
+    const saved = settings?.preferences.ai_quota_refresh_minutes;
+    if (typeof saved === 'number') setIntervalValue([1, 5, 15].includes(saved) ? saved : 0);
+  }, [settings]);
+  const saveInterval = async (value: number) => {
+    const previous = interval;
+    setIntervalValue(value);
+    try {
+      await rpc('settings.update', { preferences: { ai_quota_refresh_minutes: value } });
+      localStorage.setItem('quota-refresh-minutes', String(value));
+      await refreshSettings();
+    } catch (reason) { setIntervalValue(previous); setFailure(errorText(reason)); }
+  };
   useEffect(() => {
     for (const job of jobs) if (job.tool === 'ai_quota.refresh' && !activeJob(job.status) && !handled.current.has(job.id)) {
       handled.current.add(job.id);
@@ -147,7 +166,8 @@ export default function AiQuotaPage() {
   const last = Math.max(0, ...accounts.map(a => a.snapshot?.fetched_at || 0));
 
   return <div className="quota-page">
-    <div className="quota-toolbar"><div className="quota-sync"><span className={cx('quota-sync-dot', running && 'working')} />{running ? '正在更新额度…' : last ? `更新于 ${dateText(last)}` : '尚未查询'}<span className="quota-unit-hint">各平台独立计量</span></div><div className="button-row"><select className="quota-refresh-select" aria-label="自动刷新间隔" value={[1, 5, 15].includes(interval) ? interval : 0} onChange={e => { const value = Number(e.target.value); setIntervalValue(value); localStorage.setItem('quota-refresh-minutes', String(value)); }}><option value={0}>手动刷新</option><option value={1}>每分钟刷新</option><option value={5}>每 5 分钟刷新</option><option value={15}>每 15 分钟刷新</option></select><Button disabled={!connected || running || !accounts.length} onClick={() => void refresh()}><RefreshCw size={15} className={running ? 'quota-spin' : ''} />刷新</Button><Button variant="primary" disabled={!connected || !platforms.length} onClick={() => add(platforms[0])}><Plus size={16} />添加账户</Button></div></div>
+    <AiSyncConflicts />
+    <div className="quota-toolbar"><div className="quota-sync"><span className={cx('quota-sync-dot', running && 'working')} />{running ? '正在更新额度…' : last ? `更新于 ${dateText(last)}` : '尚未查询'}<span className="quota-unit-hint">各平台独立计量</span></div><div className="button-row"><select className="quota-refresh-select" aria-label="自动刷新间隔" value={[1, 5, 15].includes(interval) ? interval : 0} onChange={e => void saveInterval(Number(e.target.value))}><option value={0}>手动刷新</option><option value={1}>每分钟刷新</option><option value={5}>每 5 分钟刷新</option><option value={15}>每 15 分钟刷新</option></select><Button disabled={!connected || running || !accounts.length} onClick={() => void refresh()}><RefreshCw size={15} className={running ? 'quota-spin' : ''} />刷新</Button><Button variant="primary" disabled={!connected || !platforms.length} onClick={() => add(platforms[0])}><Plus size={16} />添加账户</Button></div></div>
     {!draft && !deleting && failure && <Notice tone="warning">{failure}</Notice>}
     <div className="quota-overview"><div><span className="quota-overview-icon"><Wallet size={20} /></span><span>已添加账户<strong>{accounts.length}<small> 个</small></strong></span></div><div><span className="quota-overview-icon good"><Check size={20} /></span><span>额度正常<strong>{counts.healthy}<small> 个</small></strong></span></div><div><span className="quota-overview-icon warn"><CircleAlert size={20} /></span><span>需要关注<strong>{counts.attention}<small> 个</small></strong></span></div></div>
     {accounts.length > 0 && <><div className="quota-list-toolbar"><div className="quota-tabs" role="group" aria-label="账户类型">{[['all', '全部'], ['plan', '订阅套餐'], ['balance', 'API 余额']].map(([id, label]) => <button key={id} className={filter === id ? 'selected' : ''} onClick={() => setFilter(id)}>{label}</button>)}</div><div className="search-input"><Search size={15} /><input aria-label="搜索额度账户" placeholder="搜索账户" value={query} onChange={e => setQuery(e.target.value)} /></div></div>
